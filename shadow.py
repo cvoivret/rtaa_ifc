@@ -8,8 +8,13 @@ import sunposition as sunpos
 from  datetime import datetime
 from timezonefinder import TimezoneFinder
 import pytz
+
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import ImageGrid
+import matplotlib.tri as tri
+
 import gc
+import scipy.integrate as spi
 
 import line_profiler
 
@@ -25,7 +30,7 @@ from OCC.Core.BRep import BRep_Tool
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox,BRepPrimAPI_MakePrism,BRepPrimAPI_MakeHalfSpace,BRepPrimAPI_MakeSphere,BRepPrimAPI_MakeCylinder
 from OCC.Core.BRepGProp import brepgprop_SurfaceProperties,brepgprop_VolumeProperties,brepgprop_LinearProperties
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Sewing,BRepBuilderAPI_MakeSolid,BRepBuilderAPI_MakeFace
-from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Copy
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Copy,	BRepBuilderAPI_Transform
 from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 from OCC.Core.BRepTools import breptools_UVBounds
@@ -173,10 +178,8 @@ def get_external_shell(lshape):
     return commonshell
 
 #@profile
-lmod=[]
-lntry=[]
-lprec=[]
-def shadow_caster_ext(sun_dir,mybuilding,myface,theface_norm,min_area = 1e-3):
+
+def shadow_caster_ext_on_face(sun_dir,mybuilding,myface,theface_norm,min_area = 1e-3):
     """
     sun_dir = one vector (downward direction)
     building = a solids that possibily make shadow on face
@@ -198,9 +201,9 @@ def shadow_caster_ext(sun_dir,mybuilding,myface,theface_norm,min_area = 1e-3):
     theface = BRepBuilderAPI_Copy(myface).Shape()
 
     
-    if sun_dir.Z()>0.:
+    #if sun_dir.Z()>0.:
         #print('Z positive')
-        return theface
+    #    return theface
     
     
     # face not exposed to the sun
@@ -282,8 +285,8 @@ def shadow_caster_ext(sun_dir,mybuilding,myface,theface_norm,min_area = 1e-3):
         
         #print(" precision update ", precision)
         
-    lntry.append(ntry)    
-    lprec.append(precision)
+    #lntry.append(ntry)    
+    #lprec.append(precision)
         
     intersection=cb.Shape()
     #h=cb.History()
@@ -432,6 +435,116 @@ def shadow_caster_ext(sun_dir,mybuilding,myface,theface_norm,min_area = 1e-3):
     
     
     return shadowface
+
+
+def compute_diffuse_mask_on_face(mybuilding,theface,theface_norm,min_area):
+    """
+    Compute the matrix of mask for isotropic diffuse shading
+    must be computed only once for a face
+    """
+    
+    # set a discretization of the half sphere exposed to the sun
+    n=10
+    
+    arct=np.arccos(np.linspace(0,1,n)[::-1])
+    
+    temp=np.arccos(np.linspace(1,-1,n))
+    arcp=np.concatenate((temp,temp[1:]+np.pi))
+    
+    #t= np.linspace(0,.5*np.pi,n  ,endpoint=True)
+    #p= np.linspace(0, 2*np.pi,2*n,endpoint=True)
+    t=arct
+    p=arcp
+    """
+    print('arct ',arct)
+    print(' t',t)
+    print('\narcp ',arcp)
+    print(' p',p)
+    cdsc
+    """
+    mid_t=.5*(t[1:]+t[:-1])
+    mid_p=.5*(p[1:]+p[:-1])
+    # coordinate to set the direction of mask calculation
+    t1,p1=np.meshgrid(mid_t,mid_p,indexing='ij')
+    #surf = np.zeros((t.shape[0]-1,p.shape[0]-1))
+    areas = np.zeros_like(t1)
+    
+    # computation of local area associated with each direction
+    # sum = 2*pi
+    
+    ds=lambda x,y: np.sin(x)
+    
+    for i,j in itertools.product(range(t1.shape[0]),range(t1.shape[1])):    
+        
+        res,err = spi.nquad(ds, [[t[i], t[i+1]],[p[j], p[j+1]]])
+        areas[i,j]=res
+    areas=areas.flatten()   
+    
+    # first incline (between 0+delta (normal) and PI/2) with respect of one of the axis of the surface 
+    # we dont care which axis because of the next rotation
+    srf = BRep_Tool().Surface(theface)
+    adapt=BRepAdaptor_Surface(theface)
+    #umin,umax,vmin,vmax=breptools_UVBounds(ff)
+    #props=GeomLProp_SLProps(srf3,0.5*(umax-umin),0.5*(vmax-vmin),1,0.001)
+    #fn=props.Normal()
+    plane = adapt.Plane()
+    Xaxis_plane_ax=plane.XAxis()
+    normal_plane_ax = plane.Axis()
+    normal_plane_vec = gp_Vec(normal_plane_ax.Direction()) # unit vector
+    Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
+    
+    #print('Xaxis plane ',Xaxis.Direction().Coord())
+    t_transfo = gp_Trsf()
+    p_transfo = gp_Trsf()
+    
+    lvec=[]
+    lvec_proj=[]
+    lmask_sky=[]
+    for rot_t,rot_p in zip(t1.flat,p1.flat):
+        t_transfo.SetRotation(Xaxis_plane_ax,rot_t)
+        p_transfo.SetRotation(normal_plane_ax,rot_p)
+        
+        transformed = theface_norm.Transformed(t_transfo)
+        transformed = transformed.Transformed(p_transfo)
+        final = gp_Vec(transformed) # oriented from building to sun
+        lvec.append(gp_Dir(final.Reversed())) # set direction : from sun to building
+        lmask_sky.append( final.Dot(gp_Vec(Zaxis.Direction()))>0.)
+        #lvector_diff.append(final)
+        
+        projected = normal_plane_vec.CrossCrossed(final,normal_plane_vec)
+        #print(projected.Magnitude())
+        lvec_proj.append(projected.Coord())
+    
+    #print(' normal ',theface_norm.Coord())
+    #print(' transformed ', transformed.Coord())
+    #print(lmask_sky)
+    
+    # remove the axis with null coordinate (in surface plan)
+    projected_vec= np.array(lvec_proj)
+    #print(projected_vec)
+    idx=np.argwhere(np.all(np.isclose(projected_vec[...,:],np.zeros(projected_vec.shape)),axis=0))
+    #print(idx)
+    projected_vec=np.delete(projected_vec,idx,axis=1)
+    
+        
+    # rotate with respect to the face normal 
+    
+    # negate the vectors
+    
+    
+    
+    # compute ratio for each direction
+    dmof=direct_mask_on_faces([theface],lvec)
+    dmof.compute_mask(mybuilding,min_area)
+    dmof.compute_area_and_ratio()
+    
+    mask_vector = np.array(dmof._ratio_vector)
+    mask_sky = np.array(lmask_sky)
+    
+    return t1,p1,areas,mask_vector,projected_vec,mask_sky 
+    
+    # could use sof with discretization vector instead of sun_dir
+    # Sum up and return
 
 
  
@@ -628,7 +741,7 @@ def shadow_caster_ray(sun_dir,building,theface,theface_norm,Nray=5):
     res[res>0.]=1
     return res 
 
-def exterior_wall_normal(wall_shape,external_shell):
+def exterior_wall_normal_and_plane(wall_shape,external_shell):
     
     gpp=GProp_GProps()
     
@@ -683,7 +796,7 @@ def exterior_wall_normal(wall_shape,external_shell):
         if(first_wall_face.Orientation()==1):
             wall_norm.Reverse()
         
-        return wall_norm
+        return wall_norm,plane
     
 
 def exterior_wall_normal_dict(wallwindow,external_shell):
@@ -772,17 +885,163 @@ def link_wall_window(ifcwalls):
         
     return wallwindow
 
+class diffuse_mask_on_face:
+    def __init__(self,face):
+        self._face=face
+    
+    def compute_mask(self,exposed_building,min_area):
+        srf = BRep_Tool().Surface(self._face)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(self._face.Orientation()==1):
+            face_norm.Reverse()
+            
+              
+        t1,p1,areas,mask_vector,vec,sky=compute_diffuse_mask_on_face(exposed_building,self._face,face_norm,min_area)
+        #print('\n     diffuse mask ok ')
+        
+        #self._mask_faces[i].append(shadow_face)
+        #self._durations_byfaces[i].append(end-start)
+        self._mask_value=mask_vector
+        self._masks_areas=areas
+        self._directions=vec 
+        self._mask_sky=sky
+     
+    def compute_weighted_mask(self):
+        
+        m=self._mask_value
+        a=self._masks_areas
+        ms=self._mask_sky
+        
+        self._wm=(m*a).sum()/(2*np.pi)
+            
+        print(' area sky ', a[ms].sum()/np.pi)
+        print(' area soil ', a[~ms].sum()/np.pi)
+            
+        self._wm_sky=(m[ms]*a[ms]).sum()/(a[ms].sum())
+        self._wm_soil=(m[~ms]*a[~ms]).sum()/(a[~ms].sum())
 
-class shadow_on_faces:
+        print(" wm ", self._wm)
+        print(" sky ",self._wm_sky)
+        print(" soil ", self._wm_soil)
+
+
+class diffuse_mask_on_faces:
+    """ simple container to hold computation results """
+    def __init__(self,lfaces):
+        self._lfaces=lfaces
+        self._masks=[]
+        self._masks_areas=[]
+        self._mask_sky=[]
+        self._directions=[]
+        self._wm=[]
+        self._wm_sky=[]
+        self._wm_soil=[]                
+
+    def compute_mask(self,exposed_building,min_area):
+        for i,gf in enumerate(self._lfaces):
+            # re computation of the face normal
+            # shoudl be pointing outward
+            srf = BRep_Tool().Surface(gf)
+            plane = Geom_Plane.DownCast(srf)
+            face_norm = plane.Axis().Direction()
+            if(gf.Orientation()==1):
+                face_norm.Reverse()
+                
+                  
+            t1,p1,areas,mask_vector,vec,sky=compute_diffuse_mask_on_face(exposed_building,gf,face_norm,min_area)
+            print('     diffuse mask ok ')
+            
+            #self._mask_faces[i].append(shadow_face)
+            #self._durations_byfaces[i].append(end-start)
+            self._masks.append(mask_vector)
+            self._masks_areas.append(areas)
+            self._directions.append(vec) 
+            self._mask_sky.append(sky)
+        
+    def compute_weighted_mask(self):
+        
+        for i,(m,a,d,ms) in enumerate(zip(self._masks,self._masks_areas,self._directions,self._mask_sky)):
+            self._wm.append((m*a).sum()/(2*np.pi))
+            
+            print(' area sky ', a[ms].sum()/np.pi)
+            print(' area soil ', a[~ms].sum()/np.pi)
+            
+            self._wm_sky.append((m[ms]*a[ms]).sum()/(a[ms].sum()))
+            self._wm_soil.append((m[~ms]*a[~ms]).sum()/(a[~ms].sum()))
+
+        print(" wm ", self._wm)
+        print(" sky ",self._wm_sky)
+        print(" soil ", self._wm_soil)
+
+
+class direct_mask_on_face2:
+    def __init__(self,face,lsun_dir):
+        self._face=face
+        self._lsun_dir=lsun_dir
+        self._mask_faces=[]
+    
+    def compute_mask(self,exposed_building,min_area):
+        srf = BRep_Tool().Surface(self._face)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(self._face.Orientation()==1):
+            face_norm.Reverse()
+            
+        for j,sun_dir in enumerate(self._lsun_dir):
+            
+            mask_face=shadow_caster_ext_on_face(sun_dir,exposed_building,self._face,face_norm,min_area)
+            print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
+            self._mask_faces.append(mask_face)
+    
+    def shadow_areas(self):
+        gpp=GProp_GProps()
+        l=[]
+        for f in self._mask_faces:
+            brepgprop_SurfaceProperties(f,gpp)
+            l.append(gpp.Mass())
+        
+        self._mask_area=np.array(l)
+        
+    def face_area(self):
+        gpp=GProp_GProps()
+        brepgprop_SurfaceProperties(self._face,gpp)
+        self._face_area=gpp.Mass()
+        
+    def mask_ratio(self):
+        self._mask_ratio=1.-self._mask_area/self._face_area
+        
+    def compute_complementary_face(self):
+        
+        cutter=BOPAlgo_BOP()
+        for f in self._mask_faces:
+            if not f.IsNull():
+                cutter.Clear()
+                cutter.SetOperation(BOPAlgo_Operation.BOPAlgo_CUT)
+                cutter.AddArgument(self._face)
+                cutter.AddTool(f)
+                cutter.Perform()
+                self._complementary=cutter.Shape()
+                #print(' cutter ',complementary)
+                        
+            else :
+                
+                self._complementary=complementary=glass_face  
+
+
+
+class direct_mask_on_faces:
     """ simple container to hold computation results """
     def __init__(self,lfaces,lsun_dir):
         self._lfaces=lfaces
         self._lsun_dir=lsun_dir
-        self._shadow_faces=[[] for i in range(len(self._lfaces))]
+        self._mask_faces=[[] for i in range(len(self._lfaces))]
         self._durations_byfaces=[[]]
+        self._mask_area_sum=[]
+        self._totalduration=[]
         
 
-    def compute_shadow(self,exposed_building,min_area):
+    def compute_mask(self,exposed_building,min_area):
         for i,gf in enumerate(self._lfaces):
             # re computation of the face normal
             # shoudl be pointing outward
@@ -794,10 +1053,10 @@ class shadow_on_faces:
                 
             for j,sun_dir in enumerate(self._lsun_dir):
                 start=timer()
-                shadow_face=shadow_caster_ext(sun_dir,exposed_building,gf,face_norm,1.e-3)
-                print('     sun dir ',j,'/',len(self._lsun_dir))
+                mask_face=shadow_caster_ext_on_face(sun_dir,exposed_building,gf,face_norm,min_area)
+                print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
                 end=timer()
-                self._shadow_faces[i].append(shadow_face)
+                self._mask_faces[i].append(mask_face)
                 self._durations_byfaces[i].append(end-start)
                 
                 
@@ -810,20 +1069,49 @@ class shadow_on_faces:
             brepgprop_SurfaceProperties(gf,gpp)
             self._glass_area+=gpp.Mass()
         
-        self._shadow_area_vector=[]
-        self._totalduration=[]
+        
         for vector_idx in range(len(self._lsun_dir)):
             area_sum=0.0           
             for face_idx in range(len(self._lfaces)):
-                brepgprop_SurfaceProperties(self._shadow_faces[face_idx][vector_idx],gpp)
+                brepgprop_SurfaceProperties(self._mask_faces[face_idx][vector_idx],gpp)
                 area_sum+=gpp.Mass()
                 
-            self._shadow_area_vector.append(area_sum)
+            self._mask_area_sum.append(area_sum)
             #self._totalduration.append( self._durations[face_idx])
-            
-        self._ratio_vector=[ a/self._glass_area for a in self._shadow_area_vector]
+        
+        # fraction of flux reaching the face
+        self._ratio_vector=[1.- a/self._glass_area for a in self._mask_area_sum]
         #print(' shadow area vector ',self._shadow_area_vector)
-        print(' ratio vector ',self._ratio_vector)
+        #print(' ratio vector ',self._ratio_vector)
+        
+    def compute_area_and_ratio2(self):
+        gpp=GProp_GProps() 
+        self._lglass_area=[]
+        
+        #self._glass_area=0.0
+        
+        for gf in self._lfaces :
+            brepgprop_SurfaceProperties(gf,gpp)
+            #self._glass_area+=gpp.Mass()
+            self._lglass_area.append(gpp.Mass())
+            
+        self._lglass_area=np.array(self._lglass_area)
+        
+        self._shadows_area=np.zeros((len(self._lfaces),len(self._lsun_dir)))
+        
+        for vector_idx in range(len(self._lsun_dir)):
+            for face_idx in range(len(self._lfaces)):
+                brepgprop_SurfaceProperties(self._mask_faces[face_idx][vector_idx],gpp)
+                self._shadows_area[face_idx,vector_idx]=gpp.Mass()
+        self._mask_value = 1.-self._shadows_area/self._lglass_area[:,np.newaxis]        
+            
+        #self._mask_area_sum_by_face= np.sum(self._shadows_area,axis=1)
+        #self._mask_area_sum_by_position = np.sum(self._shadows_area,axis=0)
+        
+        # fraction of flux reaching the face
+        #self._ratio_vector=[1.- a/self._glass_area for a in self._mask_area_sum]
+        #print(' shadow area vector ',self._shadow_area_vector)
+        #print(' ratio vector ',self._ratio_vector)    
         
     def compute_area_and_ratio_byunion(self):
         """ 
@@ -840,7 +1128,7 @@ class shadow_on_faces:
         for vector_idx in range(len(self._lsun_dir)):
             lfaces=[]
             for face_idx in range(len(self._lfaces)):
-                f=self._shadow_faces[face_idx][vector_idx]
+                f=self._mask_faces[face_idx][vector_idx]
                 if not f.IsNull():
                     lfaces.append(f)
             totalshadow=fuse_listOfShape(lfaces)
@@ -864,14 +1152,14 @@ class shadow_on_faces:
         for vector_idx in range(len(self._lsun_dir)):
             #area=0.0           
             for face_idx in range(len(self._lfaces)): 
-                shadow_face=self._shadow_faces[face_idx][vector_idx]
+                mask_face=self._mask_faces[face_idx][vector_idx]
                 glass_face=self._lfaces[face_idx]
                 
-                if not shadow_face.IsNull():
+                if not mask_face.IsNull():
                     cutter.Clear()
                     cutter.SetOperation(BOPAlgo_Operation.BOPAlgo_CUT)
                     cutter.AddArgument(glass_face)
-                    cutter.AddTool(shadow_face)
+                    cutter.AddTool(mask_face)
                     #cutter.SetFuzzyValue(1e-6)
                     cutter.Perform()
                     complementary=cutter.Shape()
@@ -940,6 +1228,138 @@ class shadow_on_faces_byray:
         
 
 
+
+class rtaa_on_faces:
+    
+    def __init__(self,lfaces,wall_plane,exposed_building,l_sun_dir):
+        self._lfaces=lfaces
+        self._wall_plane=wall_plane
+        #self._original_lfaces=[f for f in lfaces]
+        self._exposed_building=exposed_building
+        self._lsun_dir=l_sun_dir
+        
+        
+    def cut_exposed_building(self,cut_size,face_ref):
+        
+        #cut with face_ref as a reference plane of size cut_size
+        face=face_ref#self._lfaces[face_ref]
+        
+        srf = BRep_Tool().Surface(face)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(face.Orientation()==1):
+            face_norm.Reverse()
+                    
+        newface= BRepBuilderAPI_MakeFace(plane.Pln(),-cut_size,cut_size,-cut_size,cut_size).Face()
+        extrusion = BRepPrimAPI_MakePrism(newface,gp_Vec(face_norm)*10.,False,False).Shape()
+        
+        intersector=BOPAlgo_BOP()
+        intersector.SetOperation(BOPAlgo_Operation.BOPAlgo_COMMON)
+        intersector.AddTool(extrusion) 
+        intersector.AddArgument(self._exposed_building)
+        intersector.Perform()
+        return shapes_as_solids([intersector.Shape()])[0]
+    
+    def adjust_face_to_wall_plane(self,face_ref):
+        # translation of the face
+        face=face_ref#self._lfaces[face_ref]
+        ext_plane=self._wall_plane.Pln()
+        srf = BRep_Tool().Surface(face)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(face.Orientation()==1):
+            face_norm.Reverse()
+        
+        plane=plane.Pln()
+        plane_diff=gp_Vec(ext_plane.Location().XYZ())-gp_Vec(plane.Location().XYZ())
+        distance = plane_diff.Dot(gp_Vec(face_norm))
+        
+        translation = gp_Trsf()
+        translation.SetTranslation(gp_Vec(face_norm)*distance)
+        builder = BRepBuilderAPI_Transform(translation)
+        builder.Perform(face)
+       
+        return builder.ModifiedShape(face)
+        
+    
+    def compute_masks(self):
+        
+        self._ldirect=[]
+        self._ldiffuse=[]
+        for f in self._lfaces:
+         #rtaa_on_faces(exposed_building,sun_to_earth_project)
+            cutted_building = self.cut_exposed_building(3.,f)
+            adjusted_face = self.adjust_face_to_wall_plane(f)   
+            print('direct mask')
+            direct_mask = direct_mask_on_face2(adjusted_face,self._lsun_dir)
+            direct_mask.compute_mask(cutted_building,1e-3)
+            direct_mask.shadow_areas()
+            direct_mask.face_area()
+            direct_mask.mask_ratio()
+            print('\n')
+            
+            print('diffuse mask ')
+            diffuse_mask=diffuse_mask_on_face(adjusted_face)
+            diffuse_mask.compute_mask(cutted_building,1e-3)
+            diffuse_mask.compute_weighted_mask()
+            print('\n')
+            
+            self._ldirect.append(direct_mask)
+            self._ldiffuse.append(diffuse_mask)
+            
+             
+        
+        
+    def compute_cm(self,irradiance):
+        
+        albedo=.2
+        Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
+        
+        self._cm_byface=[]
+           
+        self._ldf_irr=[]
+        
+        for face,dir,diff in zip(self._lfaces,self._ldirect,self._ldiffuse):
+            
+            srf = BRep_Tool().Surface(face)
+            plane = Geom_Plane.DownCast(srf)
+            face_norm = plane.Axis().Direction()
+            if(face.Orientation()==1):
+                face_norm.Reverse()
+            
+            cosbeta= Zaxis.Direction().Dot(face_norm)
+            
+            Drp = irradiance['DNI']*[face_norm.Dot(s.Reversed()) for s in self._lsun_dir]
+            Dfp = irradiance['DHI']*(1+cosbeta)*.5
+            Rrp = irradiance['GHI']*albedo*(1-cosbeta)*.5
+            
+            mDrp = Drp*[r for r in dir._mask_ratio]
+            mDfp = Dfp*diff._wm_sky
+            mRrp = Rrp*diff._wm_soil
+            
+            face_irr=dict()
+            face_irr['Drp']=Drp
+            face_irr['Dfp']=Dfp
+            face_irr['Rrp']=Rrp
+            
+            face_irr['mDrp']=mDrp
+            face_irr['mDfp']=mDfp
+            face_irr['mRrp']=mRrp
+            self._ldf_irr.append(pd.DataFrame(face_irr))
+            
+            masked_irr = mDrp+mDfp+mRrp 
+            unmasked_irr = Drp+Dfp+Rrp
+            
+            self._cm_byface.append(masked_irr.sum()/unmasked_irr.sum())
+        
+        all_values=pd.concat(self._ldf_irr,axis=0)
+        total_irr =all_values[['Drp','Dfp','Rrp']].sum().sum()
+        total_m_irr =all_values[['mDrp','mDfp','mRrp']].sum().sum()
+        
+        self._cm=total_m_irr/total_irr
+        
+        
+    
 
 if __name__ == "__main__":
 
@@ -1033,8 +1453,29 @@ if __name__ == "__main__":
     for hd in hoursofdays[1:]:
         dr=dr.append( hd)
     """
-    #dr = pd.date_range(start='2020/5/25',end='2020/6/7',freq='H',inclusive="neither")
-    dr = pd.date_range(start='2020/1/1',end='2020/12/31',freq='H',inclusive="neither")
+    
+    
+    
+    irradiance=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2018.csv',skiprows=[0,1])
+    # creating datetime object
+    col= irradiance.columns
+    dt=pd.to_datetime(irradiance[col[:5]])
+    # parsing usefull datas
+    irr_col=['Clearsky DHI','Clearsky DNI', 'Clearsky GHI',
+            'DHI', 'DNI','GHI']
+    irradiance_only=irradiance[irr_col]
+    irradiance_only=irradiance_only.assign(time=dt.values)
+    
+    north_mask = (dt<'2018-04-30')*(dt>'2018-02-01')
+    mask_sample= (dt<'2018-04-30')*(dt>'2018-04-29')
+    mask_sample=north_mask
+    sample= irradiance_only[mask_sample]
+    #sample = irradiance_only[96:120]
+    
+    dr = pd.DatetimeIndex(sample['time'])   
+    
+    #dr = pd.date_range(start='2020/5/25',end='2020/5/26',freq='H',inclusive="neither")
+    #dr = pd.date_range(start='2020/1/1',end='2020/12/31',freq='H',inclusive="neither")
     #dr=dr[1880:2000]
 
     dr_proj = dr.tz_localize(tz)
@@ -1045,8 +1486,6 @@ if __name__ == "__main__":
     
     #-21.34053399695468, 55.49058057798694
     
-    
-    # take X axis
 
     
     lvector=[]
@@ -1117,11 +1556,15 @@ if __name__ == "__main__":
     # will only contain wall id that considered as exterior wall of the building
     # if id is not in the keys, the wall could be considered as interior
     normal_by_exterior_wall_id = dict()
+    plane_by_exterior_wall_id=dict()
     for (w_id,ws) in zip(windows_by_wall_id.keys(),wall_shapes):
-        normal_by_exterior_wall_id[w_id]=exterior_wall_normal(ws,external_shell)
+        wall_norm,plane_ext=exterior_wall_normal_and_plane(ws,external_shell)
+        normal_by_exterior_wall_id[w_id]=wall_norm
+        plane_by_exterior_wall_id[w_id]=plane_ext
     
     
     glassface_bywindowid=defaultdict(list)
+    glassface_extplane=dict()
     for w_id in windows_by_wall_id.keys():
         if (w_id in normal_by_exterior_wall_id.keys()):
             wall_norm=normal_by_exterior_wall_id[w_id]
@@ -1134,17 +1577,31 @@ if __name__ == "__main__":
             windowshape=create_shape(setting, ifc_file.by_guid(win_id)).geometry
             gfaces=biggestface_along_vector(windowshape,wall_norm)
             glassface_bywindowid[win_id].extend(gfaces)
+            glassface_extplane[win_id]=plane_by_exterior_wall_id[w_id]
     #lsof=[]
     sofdict=dict()
     #lhalf=[]
     #lglass=[]
     #lext=[]
-    linter=[]
+    #linter=[]
+    ldiff=[]
+    lwm=[]
+    lcm=[]
     for (k,win_id) in enumerate(glassface_bywindowid.keys()):
+        
+    
         lglassfaces=glassface_bywindowid[win_id]
         print(' window id ', win_id)
-        #if win_id!=1112:
+        #if win_id!=626:
         #    continue
+        
+        rtaa=rtaa_on_faces(lglassfaces,glassface_extplane[win_id],exposed_building,sun_to_earth_project)
+        rtaa.compute_masks()
+        rtaa.compute_cm(sample)
+        lcm.append(rtaa._cm)
+        #rtaa.adjust_face_to_wall_plane(glassface_extplane[win_id])
+        
+        """
         face= lglassfaces[0]
         #lglass.append(face)
         
@@ -1155,16 +1612,25 @@ if __name__ == "__main__":
         if(face.Orientation()==1):
             face_norm.Reverse()
         
-        umin,umax,vmin,vmax=breptools_UVBounds(face)
-        centerXYZ = srf.Value(0.5*(umax-umin),0.5*(vmax-vmin))
-        #print(centerXYZ.Coord())
-        centerXYZ.Translate(gp_Vec(face_norm)*10)
         size=3.
         newface= BRepBuilderAPI_MakeFace(plane.Pln(),-size,size,-size,size).Face()
-        halfspace = BRepPrimAPI_MakeHalfSpace(newface,centerXYZ).Solid()
+        #halfspace = BRepPrimAPI_MakeHalfSpace(newface,centerXYZ).Solid()
         #lhalf.append(halfspace)
         extrusion = BRepPrimAPI_MakePrism(newface,gp_Vec(face_norm)*10.,False,False).Shape()
-        #lext.append(extrusion)
+        
+        #terrible hack to create a surface without any mask (in theory)
+        ext_plane=glassface_extplane[win_id].Pln()
+        plane=plane.Pln()
+        plane_diff=gp_Vec(ext_plane.Location().XYZ())-gp_Vec(plane.Location().XYZ())
+        distance = plane_diff.Dot(gp_Vec(face_norm))
+        
+        
+        translation = gp_Trsf()
+        translation.SetTranslation(gp_Vec(face_norm)*distance)
+        builder = BRepBuilderAPI_Transform(translation)
+        builder.Perform(face)
+        copyface= builder.ModifiedShape(face)
+        lglassfaces=[copyface]
         
         intersector=BOPAlgo_BOP()
         intersector.SetOperation(BOPAlgo_Operation.BOPAlgo_COMMON)
@@ -1172,33 +1638,82 @@ if __name__ == "__main__":
         intersector.AddArgument(exposed_building)
         intersector.Perform()
         intersection=shapes_as_solids([intersector.Shape()])[0]
-        
-        print(" inter mod init",intersection.Modified())
-        """
-        def rgb_color(r, g, b):
-            return Quantity_Color(r, g, b, Quantity_TOC_RGB)
-    
-        x=50/256
-        gray=rgb_color(x, x, x)
-
-        display, start_display, add_menu, add_function_to_menu = init_display()
-        #[display.DisplayShape(s,color=gray,transparency=0.5) for s in building_shapes]
-        [display.DisplayShape(s,color='BLUE',transparency=0.0) for s in lglassfaces]
-
-
-        display.DisplayShape(intersection,color='RED',transparency=0.5)
-        display.FitAll()
-        start_display()
-        """
-        
-        sof=shadow_on_faces(lglassfaces,sun_to_earth_project)
-        sof.compute_shadow(intersection,1e-3)
+                
+        sof=direct_mask_on_faces(lglassfaces,sun_to_earth_project)
+        sof.compute_mask(intersection,1e-3)
         sof.compute_area_and_ratio()
+        sof.compute_area_and_ratio2()
         sof.compute_complementary_face()
         sofdict[win_id]=sof
+        
+        sofd=diffuse_mask_on_faces(lglassfaces)
+        sofd.compute_mask(intersection,1e-3)
+        sofd.compute_weighted_mask()
+        lwm.append(sofd._wm)
+        
+        # mettre les bonnes irradiaction
+        albedo=.2
+        cosbeta= Zaxis.Direction().Dot(face_norm)
+        Drp = sample['DNI']*[face_norm.Dot(s.Reversed()) for s in sun_to_earth_project]
+        Dfp = sample['DHI']*(1+cosbeta)*.5
+        Rrp = sample['GHI']*albedo*(1-cosbeta)*.5
+        
+        mDrp = Drp*[r for r in sof._ratio_vector]
+        mDfp = Dfp*sofd._wm_sky
+        mRp  = Rrp*sofd._wm_soil
+        
+        masked_irr = mDrp+mDfp+mRp 
+        unmasked_irr = Drp+Dfp+Rrp
+        
+        cm=masked_irr.sum()/unmasked_irr.sum()
+        print(' CM', cm)
+        lcm.append(cm)
+        
+        
+        ldiff.append((sofd._directions,sofd._mask_sky,sofd._masks))
+        
         #lsof.append(sof)
+        """
     
+    """
+    fig = plt.figure()#figsize=(4., 4.))
+    grid = ImageGrid(fig, 111,  # similar to subplot(111)
+                 nrows_ncols=(1,len(ldiff)),  # creates 2x2 grid of axes
+                 axes_pad=0.1,  # pad between axes in inch.
+                 )
+    #lmask=[ x[-1] for x in ldiff]
+    skyonly=False
+    for ax,(dir,sky,mask) in zip(grid, ldiff):
+        
+        skymask=sky[0]
+        x=dir[0][:,0]
+        y=dir[0][:,1]
+        z=(mask[0]).flatten()
+        
+        if skyonly:
+            x=x[skymask]
+            y=y[skymask]
+            z=z[skymask]
+        
+        triang = tri.Triangulation(x, y)
+        ax.scatter(x,y,s=z)
+        ax.set_aspect('equal')
+        tcf = ax.tricontourf(triang, z,cmap=plt.colormaps.get_cmap('viridis'))
+        ax.scatter(x,y)
+
+    fig.colorbar(tcf)
+    plt.show()
     
+    # valid for the file test
+    x=np.arange(0.1,1.1,.1)
+    rta= [0.95,0.88,0.83,0.8,0.77,0.76,.75,.75,0.74,0.74]
+    plt.plot(x,rta,'-o',label='rta')
+    plt.plot(x,lcm,'-o',label='ifc')
+    plt.legend()
+    plt.show()
+    """
+    
+    """
     result=pd.DataFrame()
     result.index = df.index
     for id,sof in sofdict.items():
@@ -1207,6 +1722,7 @@ if __name__ == "__main__":
     
     plt.plot(result,'o-')
     plt.show()
+    """
     """
     def rgb_color(r, g, b):
         return Quantity_Color(r, g, b, Quantity_TOC_RGB)
@@ -1219,11 +1735,11 @@ if __name__ == "__main__":
     display.DisplayShape(exposed_building,color=gray,transparency=0.9)
     #[display.DisplayShape(s,color=gray,transparency=0.9) for s in building_shapes]
     
-    [display.DisplayShape(s,color='BLUE',transparency=0.1) for s in lglass]
+    #[display.DisplayShape(s,color='BLUE',transparency=0.1) for s in lglass]
     
-    lvec=[gp_Vec(v) for v in earth_to_sun_project]
+    #lvec=[gp_Vec(v) for v in earth_to_sun_project]
     
-    [display.DisplayVector(v*2.,origin) for v in lvec]
+    [display.DisplayVector(v*3.,origin) for v in lvector_diff]
     #display.DisplayVector(tn_vec*2.,origin)
     #display.DisplayVector(tn_proj*4.,origin)
     #display.DisplayShape(external_shell,color='RED',transparency=0.5)
@@ -1232,7 +1748,7 @@ if __name__ == "__main__":
     #   [display.DisplayShape(s,transparency=0.1,color='BLACK') for s in sof._shadow_faces]
     #   [display.DisplayShape(s,transparency=0.1,color='YELLOW') for s in sof._complementary_faces]
        
-    [display.DisplayShape(s,color='RED',transparency=0.9) for s in lext2[:]] 
+    #[display.DisplayShape(s,color='RED',transparency=0.9) for s in lext2[:]] 
     #[display.DisplayShape(s,color='BLUE',transparency=0.5) for s in linter[::3]] 
 
     #[display.DisplayShape(s,color='GREEN',transparency=0.1) for s in lshells] 
