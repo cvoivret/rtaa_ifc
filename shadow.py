@@ -491,6 +491,8 @@ def compute_diffuse_mask_on_face(mybuilding,theface,theface_norm,min_area):
     Xaxis_plane_ax=plane.XAxis()
     normal_plane_ax = plane.Axis()
     normal_plane_vec = gp_Vec(normal_plane_ax.Direction()) # unit vector
+    
+    origin = gp_Pnt(0.0,0.0,0.0)
     Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
     
     #print('Xaxis plane ',Xaxis.Direction().Coord())
@@ -1313,6 +1315,8 @@ class rtaa_on_faces:
     def compute_cm(self,irradiance):
         
         albedo=.2
+        origin = gp_Pnt(0.0,0.0,0.0)
+
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
         
         self._cm_byface=[]
@@ -1358,7 +1362,89 @@ class rtaa_on_faces:
         
         self._cm=total_m_irr/total_irr
         
+class project_location:
+    def __init__(self):
+        pass
         
+    def set_northing_from_ifc(self,ifc_file):
+        repr_context = ifc_file.by_type('IfcGeometricRepresentationContext',False)
+        project_repre = repr_context[0]
+        true_north = project_repre.TrueNorth
+        tn_X,tn_Y= true_north.DirectionRatios
+        # true north vector in project coordinate system
+        tn_vec = gp_Vec(tn_X,tn_Y,0.0)
+        
+        origin = gp_Pnt(0.0,0.0,0.0)
+        Xaxis = gp_Ax1(origin,gp_Dir(1.0,0.0,0.0))
+        Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
+        Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
+        
+        # transformation to apply to convert in project coordinates
+        # any vector expressed in world coordinate (sun direction)
+        self._tn_angle_sgn =tn_vec.AngleWithRef(gp_Vec(Yaxis.Direction()),gp_Vec(Zaxis.Direction()))
+        self._tn_angle    = tn_vec.Angle(gp_Vec(Yaxis.Direction()))
+        
+        self._world_to_project = gp_Trsf()
+        self._world_to_project.SetRotation(Zaxis,-self._tn_angle)
+        
+        print("Angle true North : ",self._tn_angle)
+        print("signed angle : ", self._tn_angle_sgn)
+        
+        self._world_to_proj_trsf = tn_vec.Transformed(self._world_to_project)
+    
+    def set_location_from_ifc(self,ifc_file):
+        ## Site location
+        ifcsite = ifc_file.by_type('IfcSite')[0]
+        h,m,s,ms = ifcsite.RefLatitude
+        self._latitude = h+m/60+(s+ms*1e-6)/3600
+        h,m,s,ms = ifcsite.RefLongitude
+        self._longitude= h+m/60+(s+ms*1e-6)/3600
+        print("latitude : ",self._latitude)
+        print("longitude: ",self._longitude)
+        
+        ## datetime to compute shadow
+        tf=tf = TimezoneFinder()
+        self._tz = tf.timezone_at(lng=self._longitude, lat=self._latitude)  # 'Europe/Berlin'    
+        print("TimeZone : ",self._tz)
+
+        pass
+        
+    def sun_vectors(self,dtindex):
+        # compute the project sun position from a given time serie (local time, without TZ)
+        dr_proj = dtindex.tz_localize(self._tz)
+        dr_proj_utc = dr_proj.tz_convert("UTC")
+        az_vec,zen_vec=sunpos.sunpos(dr_proj_utc,self._latitude,self._longitude,0)[:2]
+        elev_vec=90-zen_vec
+        
+        origin = gp_Pnt(0.0,0.0,0.0)
+        Xaxis = gp_Ax1(origin,gp_Dir(1.0,0.0,0.0))
+        Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
+        Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
+        
+        lvector=[]
+        #earth_to_sun_project=[]
+        sun_to_earth_project=[]
+        # create transform along Xaxis based on altitude
+        for zen,az in zip(zen_vec,az_vec):
+            # rotation around X for altitude/elevation setting
+            RotX = gp_Trsf()
+            RotX.SetRotation(Xaxis,np.deg2rad(90-zen))
+            elev_dir = Yaxis.Transformed(RotX)
+            #  rotation around Z axis for azimuth
+            RotZ=gp_Trsf()
+            RotZ.SetRotation(Zaxis,np.deg2rad(-az)+self._tn_angle_sgn)
+            sun_axis=elev_dir.Transformed(RotZ)
+            sun_direction=sun_axis.Direction()
+            
+            
+            lvector.append(sun_direction.Coord())
+            #earth_to_sun_project.append(sun_direction)
+            sun_to_earth_project.append(sun_direction.Reversed())
+            #return : gp_vec in world, (az,ev)
+        return sun_to_earth_project,zen_vec,az_vec
+        
+    
+    
     
 
 if __name__ == "__main__":
@@ -1412,6 +1498,36 @@ if __name__ == "__main__":
     roof=ifc_file.by_type('IfcRoof')
     """
     
+    
+    
+    irradiance=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2018.csv',skiprows=[0,1])
+    # creating datetime object
+    col= irradiance.columns
+    dt=pd.to_datetime(irradiance[col[:5]])
+    # parsing usefull datas
+    irr_col=['Clearsky DHI','Clearsky DNI', 'Clearsky GHI',
+            'DHI', 'DNI','GHI']
+    irradiance_only=irradiance[irr_col]
+    irradiance_only=irradiance_only.assign(time=dt.values)
+    
+    north_mask = (dt<'2018-04-30')*(dt>'2018-02-01')
+    mask_sample= (dt<'2018-04-30')*(dt>'2018-04-29')
+    #mask_sample=north_mask
+    sample= irradiance_only[mask_sample]
+    #sample = irradiance_only[96:120]
+    
+    dr = pd.DatetimeIndex(sample['time'])   
+    
+    
+    proj_loc=project_location()
+    proj_loc.set_location_from_ifc(ifc_file)
+    proj_loc.set_northing_from_ifc(ifc_file)
+    sun_to_earth_project,zen_vec,az_vec=proj_loc.sun_vectors(dr)
+    
+    
+    
+    
+    """
     repr_context = ifc_file.by_type('IfcGeometricRepresentationContext',False)
     project_repre = repr_context[0]
     true_north = project_repre.TrueNorth
@@ -1447,6 +1563,8 @@ if __name__ == "__main__":
     print("TimeZone : ",tz)
     
     """
+    
+    """
     days=pd.date_range(start='15/1/2020',end='15/12/2020',freq='M')
     hoursofdays =[ pd.date_range(start=d,periods=24,freq='H') for d in days]
     dr=hoursofdays[0]
@@ -1455,7 +1573,7 @@ if __name__ == "__main__":
     """
     
     
-    
+    """
     irradiance=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2018.csv',skiprows=[0,1])
     # creating datetime object
     col= irradiance.columns
@@ -1473,11 +1591,11 @@ if __name__ == "__main__":
     #sample = irradiance_only[96:120]
     
     dr = pd.DatetimeIndex(sample['time'])   
-    
+    """
     #dr = pd.date_range(start='2020/5/25',end='2020/5/26',freq='H',inclusive="neither")
     #dr = pd.date_range(start='2020/1/1',end='2020/12/31',freq='H',inclusive="neither")
     #dr=dr[1880:2000]
-
+    """
     dr_proj = dr.tz_localize(tz)
     dr_proj_utc = dr_proj.tz_convert("UTC")
     
@@ -1493,24 +1611,27 @@ if __name__ == "__main__":
     sun_to_earth_project=[]
     # create transform along Xaxis based on altitude
     for zen,az in zip(zen_vec,az_vec):
+        # rotation around X for altitude/elevation setting
         RotX = gp_Trsf()
         RotX.SetRotation(Xaxis,np.deg2rad(90-zen))
         elev_dir = Yaxis.Transformed(RotX)
-        # create rotation around Z axis for azimuth
+        #  rotation around Z axis for azimuth
         RotZ=gp_Trsf()
-        RotZ.SetRotation(Zaxis,np.deg2rad(-az))
+        RotZ.SetRotation(Zaxis,np.deg2rad(-az)+angle)
         sun_axis=elev_dir.Transformed(RotZ)
+        
         # need to take into account True north
         sun_direction=sun_axis.Direction()
         lvector.append(sun_direction.Coord())
         earth_to_sun_project.append(sun_direction)
         sun_to_earth_project.append(sun_direction.Reversed())
-    
+    """
+    """
     sun_vec_world=np.array(lvector)
     df=pd.DataFrame(data=np.column_stack([az_vec,elev_vec,sun_vec_world]),
                     index=dr_proj,
                     columns=['azimuth','elevation','Vx','Vy','Vz'])
-    
+    """
     
     #sun_to_earth_project = [ d.Reversed() for d in earth_to_sun_project]
     
