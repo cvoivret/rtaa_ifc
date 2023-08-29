@@ -1334,10 +1334,11 @@ class rtaa_on_faces:
             
             directflux = [face_norm.Dot(s.Reversed()) for s in self._lsun_dir]
                         
-            Drp = irradiance['DNI']*[f if f>-1.e-5 else 0.0 for f in directflux]
+            Drp = irradiance['DNI']*directflux#[f if f>-1.e-5 else 0.0 for f in directflux]
             Dfp = irradiance['DHI']*(1+cosbeta)*.5
             Rrp = irradiance['GHI']*albedo*(1-cosbeta)*.5
             
+            print(dir._mask_ratio)
             mDrp = Drp*dir._mask_ratio
             mDfp = Dfp*diff._wm_sky
             mRrp = Rrp*diff._wm_soil
@@ -1462,7 +1463,7 @@ class project_location:
             # rotation around Z axis for azimuth
             # az is generally given clockwise oriented
             RotZ=gp_Trsf()
-            RotZ.SetRotation(Zaxis,np.deg2rad(-az) + self._tn_angle)
+            RotZ.SetRotation(Zaxis,np.deg2rad(-az) )#+ self._tn_angle)
             sun_axis=elev_dir.Transformed(RotZ)
             
             sun_direction=sun_axis.Direction()
@@ -1577,7 +1578,7 @@ if __name__ == "__main__":
     irradiance_only=irradiance_only.assign(time=dt.values)
     
     north_mask = (dt<'2018-04-30')*(dt>'2018-02-01')
-    eso_mask = (dt<'2018-02-28')*(dt>'2018-01-01')
+    eso_mask =   (dt<'2018-02-28')*(dt>'2018-01-01')
     
         
     tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
@@ -1602,7 +1603,7 @@ if __name__ == "__main__":
             
             
             sample= irradiance_only[mask]
-            sample= sample[:100]
+            #sample= sample[:500]
             
             dr = pd.DatetimeIndex(sample['time']) 
             
