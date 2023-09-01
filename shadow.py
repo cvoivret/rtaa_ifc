@@ -207,7 +207,7 @@ def shadow_caster_ext_on_face(sun_dir,mybuilding,myface,theface_norm,min_area = 
     
     
     # face not exposed to the sun
-    #print(' DOT ' , theface_norm.Dot(sun_dir))
+    #print(' DOT ' , theface_norm.Dot(sun_dir),flush=True)
     if theface_norm.Dot(sun_dir)>-1e-5:
         #print('not exposed',flush=True)
         #print('Not oriented to the sun')
@@ -283,51 +283,16 @@ def shadow_caster_ext_on_face(sun_dir,mybuilding,myface,theface_norm,min_area = 
             
         
         
-        #print(" precision update ", precision)
+        #print(" precision update ", precision,flush=True)
         
     #lntry.append(ntry)    
     #lprec.append(precision)
         
     intersection=cb.Shape()
-    #h=cb.History()
     
-        
-    #print('hist ',h.DumpToString())
-    
-    """
-    common=BRepAlgoAPI_Common(building,extrusion1)
-    extrusion1=common.Shape()
-    """
-    #print("first")
-    
-    """
-    if len(warnings)>0 and len(warnings) <20 :
-    
-        print("Warning ",warnings)
-        def rgb_color(r, g, b):
-            return Quantity_Color(r, g, b, Quantity_TOC_RGB)
-    
-        x=50/256
-        gray=rgb_color(x, x, x)
-
-        display, start_display, add_menu, add_function_to_menu = init_display()
-
-        display.DisplayShape(building,color=gray,transparency=0.9)
-        display.DisplayShape(extrusion1,color='RED',transparency=0.9)
-
-        display.DisplayShape(intersection,color='BLUE',transparency=0.1)
-    
-        display.FitAll()
-        #ifcopenshell.geom.utils.main_loop()
-        start_display()
-    """
-    
-    #print("Error ",common.DumpErrorsToString())
- 
- 
     intersection_faces=list(TopologyExplorer(intersection).faces())
+    print('N iter ',len(intersection_faces),flush=True)
     if(len(intersection_faces)==0):
-        
         return TopoDS_Face()           
     # flux trough the face
     brepgprop_SurfaceProperties(theface,gpp)
@@ -371,11 +336,9 @@ def shadow_caster_ext_on_face(sun_dir,mybuilding,myface,theface_norm,min_area = 
         umin,umax,vmin,vmax=breptools_UVBounds(ff)
         props=GeomLProp_SLProps(srf3,0.5*(umax-umin),0.5*(vmax-vmin),1,0.001)
         fn=props.Normal()
-        
-        
-        
         if(ff.Orientation()==1):
             fn.Reverse()
+        
         # avoid face nearly parallel with extrusion generatrix
         # ie face with normal perpendicular with extrusion direction
         if(fn.Dot(sun_dir)<-1e-5):
@@ -975,6 +938,8 @@ class diffuse_mask_on_faces:
         print(" wm ", self._wm)
         print(" sky ",self._wm_sky)
         print(" soil ", self._wm_soil)
+        
+        
 
 
 class direct_mask_on_face2:
@@ -990,11 +955,52 @@ class direct_mask_on_face2:
         if(self._face.Orientation()==1):
             face_norm.Reverse()
             
+        #self.display(exposed_building)
+        #csdc
+        
         for j,sun_dir in enumerate(self._lsun_dir):
-            
+            # sun under the horizon line (nighttime)
+            #if sun_dir.Coord()[2]>0.0 :
+            #    mask_face=self._face
+            #else :
             mask_face=shadow_caster_ext_on_face(sun_dir,exposed_building,self._face,face_norm,min_area)
+            
             print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
             self._mask_faces.append(mask_face)
+        
+    def display(self,exposed_building):
+        
+        def rgb_color(r, g, b):
+            return Quantity_Color(r, g, b, Quantity_TOC_RGB)
+    
+        x=50/256
+        gray=rgb_color(x, x, x)
+
+        srf = BRep_Tool().Surface(self._face)
+        umin,umax,vmin,vmax=breptools_UVBounds(self._face)
+        center = srf.Value((umax+umin)*.5,(vmax+vmin)*.5)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(self._face.Orientation()==1):
+            face_norm.Reverse()
+        face_norm=gp_Vec(face_norm)
+        
+        lvec=[gp_Vec(d) for d in self._lsun_dir]
+        # display of sun vectors around the face
+        sun_pos =[ center.Translated(v*(-3.)) for v in lvec]
+        
+        
+        display, start_display, add_menu, add_function_to_menu = init_display()
+        display.DisplayVector(face_norm,center)
+        [display.DisplayVector(v,p) for v,p in zip(lvec,sun_pos)]
+        display.DisplayShape(exposed_building,color=gray,transparency=0.5)
+        display.DisplayShape(self._face,color='BLUE',transparency=0.5)
+        
+        display.FitAll()
+        start_display()
+        
+        
+    
     
     def shadow_areas(self):
         gpp=GProp_GProps()
@@ -1292,7 +1298,7 @@ class rtaa_on_faces:
         self._ldiffuse=[]
         for f in self._lfaces:
          #rtaa_on_faces(exposed_building,sun_to_earth_project)
-            cutted_building = self.cut_exposed_building(3.,f)
+            cutted_building = self.cut_exposed_building(1.,f)
             adjusted_face = self.adjust_face_to_wall_plane(f)   
             print('direct mask')
             direct_mask = direct_mask_on_face2(adjusted_face,self._lsun_dir)
@@ -1310,13 +1316,68 @@ class rtaa_on_faces:
             
             self._ldirect.append(direct_mask)
             self._ldiffuse.append(diffuse_mask)
+    
+    def compute_masks_hangover(self,hp,lp,dhp,dhm,pcd=0.0,pcg=0.0):
+        # direct irradiance
+        
+        origin = gp_Pnt(0.0,0.0,0.0)
+        Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
+        Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
+        
+        Fdir=np.array(len(self._lsun_dir))
+        for face in self._lfaces:
+            srf = BRep_Tool().Surface(face)
+            plane = Geom_Plane.DownCast(srf)
+            face_norm = plane.Axis().Direction()
+            if(face.Orientation()==1):
+                face_norm.Reverse()
             
+                            
+            cosbeta= Zaxis.Direction().Dot(face_norm)
+            Zvec = Zaxis.Direction()
+            earth_to_sun =  [s.Reversed() for s in self._lsun_dir]
+            zenith  = np.array([Zaxis.Direction().Angle(s) for s in earth_to_sun])
+            directflux = np.array([face_norm.Dot(s) for s in earth_to_sun])
+            horizontalflux= np.array([Zvec.Dot(s) for s in earth_to_sun])
+            
+            Zvec=gp_Vec(Zaxis.Direction())
+            svec= [ gp_Vec(s) for s in earth_to_sun]
+            projXY = [Zvec.CrossCrossed(s,Zvec) for s in svec]
+            gamma = [xy.Angle(s) for s,xy in zip(svec,projXY)]
+            psialpha=[xy.Angle(gp_Vec(face_norm)) for  xy in projXY]
+            
+            dhmprime=dhm*np.tan(gamma)/np.cos(psialpha)
+            gammaprime=np.sin(psialpha)/np.tan(gamma)
+            lfdir=[]
+            for gammap,dhmp in zip(gammaprime,dhmprime):
+                A1d=np.max([ 0, np.min([lp ,  lp+pcd    +np.min([dhp,dhmp])*gammap ])])
+                A2d=np.max([ 0, np.min([hp ,  dhmp-dhp, -pcd/gammap -dhp])])
+                A3d=np.max([ 0, np.min([lp ,  lp+pcd    +np.min([dhp+hp,dhmp])*gammap ])])
+                A4d=np.max([ 0, np.min([hp ,  dhmp-dhp, -(pcd+lp)/gammap -dhp ])])
+                Fdird=1-(A1d*A2d + (A4d-A2d)*(A1d+A3d)*.5)/(hp*lp)
+                
+                A1g=np.max([ 0, np.min([lp ,  lp+pcg   -np.min([dhp,dhmp])*gammap ])])
+                A2g=np.max([ 0, np.min([hp ,  dhmp-dhp, pcg/gammap -dhp])])
+                A3g=np.max([ 0, np.min([lp ,  lp+pcg   -np.min([dhp+hp,dhmp])*gammap ])])
+                A4g=np.max([ 0, np.min([hp ,  dhmp-dhp, (pcg+lp)/gammap -dhp ])])
+                Fdirg=1-(A1g*A2g + (A4g-A2g)*(A1g+A3g)*.5)/(hp*lp)
+            
+                lfdir.append(Fdirg*Fdird)
+            
+            not_exposed= directflux<1e-5
+            
+            self._LFdir=np.array(lfdir)
+            self._LFdir[not_exposed]=0.0
+            self._Fdiff=np.arctan((dhp+hp*.5)/dhm)/(.5*np.pi)*(1- np.arctan((dhp+.5*hp)/(lp*.5+(pcg+pcd)*.5))/(np.pi/2.))
+    
         
     def compute_cm(self,irradiance):
         
         albedo=.2
         origin = gp_Pnt(0.0,0.0,0.0)
+        Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
+        
         
         self._cm_byface=[]
            
@@ -1330,19 +1391,45 @@ class rtaa_on_faces:
             if(face.Orientation()==1):
                 face_norm.Reverse()
             
+                            
             cosbeta= Zaxis.Direction().Dot(face_norm)
+            Zvec = Zaxis.Direction()
+            earth_to_sun =  [s.Reversed() for s in self._lsun_dir]
+            zenith  = np.array([Zaxis.Direction().Angle(s) for s in earth_to_sun])
+            directflux = np.array([face_norm.Dot(s) for s in earth_to_sun])
+            horizontalflux= np.array([Zvec.Dot(s) for s in earth_to_sun])
             
-            directflux = [face_norm.Dot(s.Reversed()) for s in self._lsun_dir]
-                        
-            Drp = irradiance['DNI']*directflux#[f if f>-1.e-5 else 0.0 for f in directflux]
+            not_exposed = directflux<-1e-5
+            directflux [not_exposed]=0.0
+            
+            Rb = directflux/horizontalflux
+            
+            maskratio = dir._mask_ratio
+            #print(directflux)
+            #print(Rb)
+            #maskratio[not_exposed]=0.0
+            
+            actual_ghi = irradiance['DNI']*np.sin(np.pi-zenith)+irradiance['DHI']
+            actual_ghi[not_exposed]=irradiance['DHI'][not_exposed]
+            
+            Drp = irradiance['DNI']*Rb
             Dfp = irradiance['DHI']*(1+cosbeta)*.5
             Rrp = irradiance['GHI']*albedo*(1-cosbeta)*.5
+            # RTAA rule
+            Drp[not_exposed]=0.0
+            Dfp[not_exposed]=0.0
+            Rrp[not_exposed]=0.0
             
-            print(dir._mask_ratio)
-            mDrp = Drp*dir._mask_ratio
+            
+            mDrp = Drp*maskratio
             mDfp = Dfp*diff._wm_sky
             mRrp = Rrp*diff._wm_soil
             
+            masked_irr   = mDrp + mDfp + mRrp 
+            unmasked_irr =  Drp +  Dfp +  Rrp
+            
+            self._cm_byface.append( masked_irr.sum()/unmasked_irr.sum() )
+                        
             face_irr=dict()
             face_irr['Drp']=Drp
             face_irr['Dfp']=Dfp
@@ -1352,14 +1439,13 @@ class rtaa_on_faces:
             face_irr['mDfp']=mDfp
             face_irr['mRrp']=mRrp
             
-            face_irr['mask']=dir._mask_ratio
+            face_irr['mask']=maskratio
+            face_irr['flux']=np.array([face_norm.Dot(s) for s in earth_to_sun])
+            face_irr['cm_inst']=masked_irr/unmasked_irr
             
             self._ldf_irr.append(pd.DataFrame(face_irr))
             
-            masked_irr   = mDrp + mDfp + mRrp 
-            unmasked_irr =  Drp +  Dfp + Rrp
             
-            self._cm_byface.append( masked_irr.sum()/unmasked_irr.sum() )
             
         
         all_values=pd.concat(self._ldf_irr,axis=0)
@@ -1394,7 +1480,7 @@ class project_location:
         #self._tn_angle_sgn = self._tn_vec.AngleWithRef(gp_Vec(Yaxis.Direction()),gp_Vec(Zaxis.Direction()))
         self._tn_angle     = tn_vec.Angle(gp_Vec(Yaxis.Direction()))
         
-        print("Angle true North : ",tn_angle)
+        print("Angle true North : ",self._tn_angle)
         
         #print("Signed angle : ", self._tn_angle_sgn)
         """
@@ -1407,10 +1493,12 @@ class project_location:
         #self._tn_angle_sgn = new_tn
         self._tn_angle     = np.abs(new_tn)
         
+        print("Angle true North (updated): ",self._tn_angle)
+        """
         origin = gp_Pnt(0.0,0.0,0.0)
         Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
-        
+        """
         #print("
         """
         self._tn_rotation = gp_Trsf()
@@ -1463,13 +1551,14 @@ class project_location:
             # rotation around Z axis for azimuth
             # az is generally given clockwise oriented
             RotZ=gp_Trsf()
-            RotZ.SetRotation(Zaxis,np.deg2rad(-az) )#+ self._tn_angle)
+            RotZ.SetRotation(Zaxis,np.deg2rad(-az) + self._tn_angle)
             sun_axis=elev_dir.Transformed(RotZ)
             
             sun_direction=sun_axis.Direction()
             
             sun_to_earth_project.append(sun_direction.Reversed())
-            
+        
+        
         return sun_to_earth_project,zen_vec,az_vec
         
     
@@ -1567,7 +1656,13 @@ if __name__ == "__main__":
             glassface_extplane[win_id]=plane_by_exterior_wall_id[w_id]
         
     
-    irradiance=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2018.csv',skiprows=[0,1])
+    irradiance2018=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2018.csv',skiprows=[0,1])
+    irradiance2017=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2017.csv',skiprows=[0,1])
+    irradiance2019=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2019.csv',skiprows=[0,1])
+    lirrariance = [irradiance2017,irradiance2018,irradiance2019]
+    irradiance_all = pd.concat(lirrariance)
+    
+    irradiance = irradiance2018
     # creating datetime object
     col= irradiance.columns
     dt=pd.to_datetime(irradiance[col[:5]])
@@ -1577,8 +1672,8 @@ if __name__ == "__main__":
     irradiance_only=irradiance[irr_col]
     irradiance_only=irradiance_only.assign(time=dt.values)
     
-    north_mask = (dt<'2018-04-30')*(dt>'2018-02-01')
-    eso_mask =   (dt<'2018-02-28')*(dt>'2018-01-01')
+    north_mask = (dt.dt.strftime("%m-%d")<'04-30')*(dt.dt.strftime("%m-%d")>'02-01')
+    eso_mask =   (dt.dt.strftime("%m-%d")<'02-28')*(dt.dt.strftime("%m-%d")>'01-01')
     
         
     tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
@@ -1586,49 +1681,89 @@ if __name__ == "__main__":
     orientations_name=['NORD','EST','SUD','OUEST']
     time_mask = [north_mask,eso_mask,eso_mask,eso_mask]
     
-    tn_angle=[0.0]
+    config={name:(a,m) for name,a,m in zip(orientations_name,tn_angle,time_mask)}
+        
+    #tn_angle=[0.0]
     proj_loc=project_location()
     proj_loc.set_location_from_ifc(ifc_file)
     proj_loc.set_northing_from_ifc(ifc_file)
     
     res=[]
-    for tn,mask in zip(tn_angle,time_mask):
-        lcm=[]
-        for (k,win_id) in enumerate(glassface_bywindowid.keys()):
-            
-            lglassfaces=glassface_bywindowid[win_id]
-            print(' window id ', win_id)
-            #if win_id!=626:
-            #    continue
-            
-            
-            sample= irradiance_only[mask]
-            #sample= sample[:500]
-            
-            dr = pd.DatetimeIndex(sample['time']) 
-            
-            #proj_loc.update_northing_from_angle(tn)
-            sun_to_earth_project,zen_vec,az_vec=proj_loc.sun_vectors(dr)
+    
+    totake=['SUD']
+    list_conf= [ config[n] for n in totake]
+    #list_conf=[ c for c in config.values()]
+    
+    lirrariance=lirrariance[:1]
+    
+    
+    x=np.arange(0.1,1.1,.1)
+    cm_year=[]
+    for irr in lirrariance:
+        irr_only=irr[irr_col]
+        dt=pd.to_datetime(irr[col[:5]])
+        irr_only=irr.assign(time=dt.values)
+        
+        cm_orientation=[]
+        for tn,tmask in list_conf:
+            cm_id=[]
+            for (k,win_id) in enumerate(glassface_bywindowid.keys()):
                 
-            rtaa=rtaa_on_faces(lglassfaces,glassface_extplane[win_id],exposed_building,sun_to_earth_project)
-            rtaa.compute_masks()
-            rtaa.compute_cm(sample)
-            
-            lcm.append(rtaa._cm)
-        res.append(lcm)
+                lglassfaces=glassface_bywindowid[win_id]
+                print(' window id ', win_id)
+                if win_id!=1112:
+                    continue
+                
+                proj_loc.update_northing_from_angle(tn)
+                
+                sample= irr_only[tmask]
+                sample= sample[:]
+                
+                dr = pd.DatetimeIndex(sample['time']) 
+                
+                #proj_loc.update_northing_from_angle(tn)
+                sun_to_earth_project,zen_vec,az_vec=proj_loc.sun_vectors(dr)
+                    
+                rtaa=rtaa_on_faces(lglassfaces,glassface_extplane[win_id],exposed_building,sun_to_earth_project)
+                rtaa.compute_masks()
+                rtaa.compute_cm(sample)
+                rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm=x[k])
+                """
+                print(rtaa._LFdir)
+                print(rtaa._Fdiff)
+                print(rtaa._ldirect[0]._mask_ratio)
+                """
+                cm_id.append(rtaa._cm)
+                
+            cm_orientation.append(cm_id)
+        
+        cm_year.append(cm_orientation)
     
     
     rtaa_data= pd.read_excel('data/h85_l50_ec15.xlsx')
+    """
+    plt.plot(rtaa._LFdir,'-',label='rtaa')
+    plt.plot(rtaa._ldirect[0]._mask_ratio,'-',label='computed')
+    plt.plot(rtaa._ldf_irr[0]['flux'].values,'-',label='flux')
+    plt.legend()
+    plt.show()
+    """
     
-    x=np.arange(0.1,1.1,.1)
+    
+    #rtaa_hang=[rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm) for dhm in x]
+    
     colors=['r','g','b','k']
-    for data,name,c in zip(res,orientations_name,colors):
-        plt.plot(x,data,'-',color=c,lw=2,label=name+'_computed')
+    marks=['x','d','o']
+    for cmy,m in zip(cm_year,marks):
+        for data,name,c in zip(cmy,totake,colors):
+            plt.plot(x,data,'-',color=c,marker=m,lw=2,label=name+'_computed')
+    
+    for name,c in zip(totake,colors):
         plt.plot(x,rtaa_data[name],'--',color=c,lw=2,label=name+'_ref')
     
     plt.legend()
     plt.show()
- 
+    
         
     
     """
