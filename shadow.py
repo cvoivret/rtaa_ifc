@@ -1,5 +1,6 @@
 from collections import defaultdict
 import itertools
+from itertools import compress
 from array import array
 import numpy as np
 import pandas as pd
@@ -177,9 +178,8 @@ def get_external_shell(lshape):
     
     return commonshell
 
-#@profile
-#nface=[]
-def shadow_caster_ext_on_face(sun_dir,mybuilding,myface,theface_norm,min_area = 1e-3):
+
+def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm,min_area = 1e-3):
     """
     sun_dir = one vector (downward direction)
     building = a solids that possibily make shadow on face
@@ -380,7 +380,7 @@ def shadow_caster_ext_on_face(sun_dir,mybuilding,myface,theface_norm,min_area = 
     #print(" with intersection :",len(lface2)    )
     #print(" with flux :",len(lfaces3))
     
-    nface.append(len(lface2))
+    
     
     if len(lface2)==1:
         shadowface=lface2[0]
@@ -496,7 +496,7 @@ def compute_diffuse_mask_on_face(mybuilding,theface,theface_norm,min_area):
     
     
     # compute ratio for each direction
-    dmof=direct_mask_on_face2(theface,lvec)
+    dmof=direct_mask_on_face(theface,lvec)
     dmof.compute_mask(mybuilding,min_area)
     dmof.shadow_areas()
     dmof.face_area()
@@ -511,199 +511,7 @@ def compute_diffuse_mask_on_face(mybuilding,theface,theface_norm,min_area):
     # Sum up and return
 
 
- 
-#@profile
-def shadow_caster_ext2(sun_dir,building,theface,theface_norm,min_area = 1e-3):
-    """
-    sun_dir = one vector (downward direction)
-    building = a solids that possibily make shadow on face
-    face = a face to cast shadow on from building along sun_dir
-    face_norm = pointing to the exterior of the face (outside)
-    
-    return  : a face with zero or positive area, None if no shadow
-    
-    """
-    #print(theface_norm.Dot(sun_dir))
-    # face not exposed to the sun
-    if theface_norm.Dot(sun_dir)>-1e-5:
-        #print('not exposed',flush=True)
-        return theface# void face with zero area
-    gpp=GProp_GProps()
-    brepgprop_SurfaceProperties(theface,gpp)
-    gf_area=gpp.Mass()
-    
-    ext_vec=gp_Vec(sun_dir)
-    ext_vec.Multiply(2)
-    
-    # extrusion of 
-    extrusion1=BRepPrimAPI_MakePrism(theface,-ext_vec,False,True).Shape()
-    
-    """
-    intersector=BOPAlgo_BOP()
-    intersector.SetOperation(BOPAlgo_Operation.BOPAlgo_COMMON)
-    intersector.AddTool(extrusion1) 
-    intersector.AddArgument(building)
-    intersector.Perform()
-    intersection=intersector.Shape()
-    """
-    common1=BRepAlgoAPI_Common(extrusion1,building)
-    #common1.Build()
-    intersection=common1.Shape()
 
-    
-    intersection_faces=list(TopologyExplorer(intersection).faces())
-               
-    larea=[]
-    lfaces=[]
-    
-    for ff in intersection_faces:
-        
-        adapt=BRepAdaptor_Surface(ff)
-        if adapt.GetType()==1:
-            cyl=adapt.Cylinder()
-            umin,umax,vmin,vmax=breptools_UVBounds(ff)
-            if vmin<0.0:
-                cyl.VReverse()
-            
-            ax3=cyl.Position()
-            vec=gp_Dir(*sun_dir.Coord())
-            
-            vec.Cross(ax3.Direction())
-            newax3=gp_Ax3(ax3.Location(),ax3.Direction(),vec)
-            shape=BRepPrimAPI_MakeCylinder(newax3.Ax2(),cyl.Radius()*2,2,3.14).Shape()
-            
-            com=BRepAlgoAPI_Common(shape,ff)
-            com.Build()
-            shape=com.Shape()
-            #lcyl.append(shape)
-            maps=TopTools_IndexedMapOfShape()
-            topexp_MapShapes(shape,TopAbs_FACE,maps)
-            lfacetokeep=[maps.FindKey(i) for i in range(1,maps.Size()+1)]
-            if( len(lfacetokeep)==1):
-                ff=lfacetokeep[0]
-            else:
-                continue
-        
-        srf3 = BRep_Tool().Surface(ff)
-        umin,umax,vmin,vmax=breptools_UVBounds(ff)
-        props=GeomLProp_SLProps(srf3,0.5*(umax-umin),0.5*(vmax-vmin),1,0.001)
-        fn=props.Normal()
-        
-        
-        
-        if(ff.Orientation()==1):
-            fn.Reverse()
-        # avoid face nearly parallel with extrusion generatrix
-        # ie face with normal perpendicular with extrusion direction
-        if(fn.Dot(sun_dir)<-1e-5):
-            brepgprop_SurfaceProperties(ff,gpp)
-            larea.append(gpp.Mass())
-            if(ff.Orientation()==1):
-                ff.Reverse()
-            
-            lfaces.append(ff)
-    
-    lsolid=[ BRepPrimAPI_MakePrism(s,ext_vec,False,True).Shape() for s in lfaces]
-    
-    
-    if(len(lsolid)==0):
-        return TopoDS_Face() # void face with zero area
-    
-    brepgprop_SurfaceProperties(theface,gpp)
-    totarea=gpp.Mass()
-    
-    """
-    lface2=[]
-    
-
-    for s,f in zip(lsolid,lfaces):
-        
-    
-        common=BRepAlgoAPI_Common(s,theface)
-        
-        sh=common.Shape()
-        
-        brepgprop_SurfaceProperties(sh,gpp)
-        area_proj=gpp.Mass()
-        #brepgprop_SurfaceProperties(f,gpp)
-        #area=gpp.Mass()
-        if(area_proj/totarea<1e-4):
-            continue
-        lface2.append(sh)
-    """
-    ## keep that, remove intersection with unit face, intersect with the union
-    # profile !!
-    los3 = TopTools_ListOfShape()   
-    [los3.Append(s) for s in lsolid]    
-    cb1=BOPAlgo_CellsBuilder()
-    cb1.SetArguments(los3)
-    cb1.Perform()
-    cb1.AddAllToResult(2,False)
-    cb1.RemoveInternalBoundaries()
-    shape2=cb1.Shape()
-    #lshapee.append(shape2)    
-    
-    if not shape2:
-        return TopoDS_Face()
-        #len(lface2)==1:
-        #shadowface=lface2[0]
-    else:    
-        
-        common=BRepAlgoAPI_Common(shape2,theface)
-        
-        shadowface=common.Shape()
-        
-    
-    if shadowface==None:
-        return TopoDS_Face()
-       
-    return shadowface
-
-
-
-
-
-def shadow_caster_ray(sun_dir,building,theface,theface_norm,Nray=5):
- 
-    sphere_rad=0.05
-    lshape=[]
-        
-    #discretize the face with Nray points
-    srf = BRep_Tool().Surface(theface)
-    umin,umax,vmin,vmax=breptools_UVBounds(theface)
-    
-    uoffset=0.5*(umax-umin)/Nray
-    voffset=0.5*(vmax-vmin)/Nray
-    
-    uvalues,vvalues= np.meshgrid(np.linspace(umin+uoffset,umax-uoffset,Nray),
-                                 np.linspace(vmin+voffset,vmax-voffset,Nray))
-    
-    # face not exposed to the sun
-    if theface_norm.Dot(sun_dir)>-1.e-5:
-        
-        for u,v in zip(uvalues.flatten(),vvalues.flatten()):
-            point=srf.Value(u,v)
-            #lshape.append(BRepPrimAPI_MakeSphere(point,sphere_rad).Shape())
-        return np.ones(uvalues.shape)#,lshape# all points of discretization are in shadow
-    
-    
-    shape_inter = IntCurvesFace_ShapeIntersector()
-    shape_inter.Load(building, 1e-6)
-    infinity=float("+inf")
-    nbpoints=array('b')
-    for u,v in zip(uvalues.flatten(),vvalues.flatten()):
-        point=srf.Value(u,v)
-        line=gp_Lin(point,-sun_dir)
-        shape_inter.PerformNearest(line, 0.0,100.)
-        nbpoints.append(shape_inter.NbPnt())
-        #if(shape_inter.NbPnt()>0):
-        #    lshape.append(BRepPrimAPI_MakeSphere(point,sphere_rad).Shape())
-    
-    #print(nbpoints)
-    res=np.array(nbpoints).reshape(uvalues.shape)
-    
-    res[res>0.]=1
-    return res 
 
 def exterior_wall_normal_and_plane(wall_shape,external_shell):
     
@@ -926,61 +734,11 @@ class diffuse_mask_on_face:
         display.FitAll()
         start_display()
 
-
-class diffuse_mask_on_faces:
-    """ simple container to hold computation results """
-    def __init__(self,lfaces):
-        self._lfaces=lfaces
-        self._masks=[]
-        self._masks_areas=[]
-        self._mask_sky=[]
-        self._directions=[]
-        self._wm=[]
-        self._wm_sky=[]
-        self._wm_soil=[]                
-
-    def compute_mask(self,exposed_building,min_area):
-        for i,gf in enumerate(self._lfaces):
-            # re computation of the face normal
-            # shoudl be pointing outward
-            srf = BRep_Tool().Surface(gf)
-            plane = Geom_Plane.DownCast(srf)
-            face_norm = plane.Axis().Direction()
-            if(gf.Orientation()==1):
-                face_norm.Reverse()
-                
-                  
-            t1,p1,areas,mask_vector,vec,sky=compute_diffuse_mask_on_face(exposed_building,gf,face_norm,min_area)
-            print('     diffuse mask ok ')
-            
-            
-            
-            #self._mask_faces[i].append(shadow_face)
-            #self._durations_byfaces[i].append(end-start)
-            self._masks.append(mask_vector)
-            self._masks_areas.append(areas)
-            self._directions.append(vec) 
-            self._mask_sky.append(sky)
-        
-    def compute_weighted_mask(self):
-        
-        for i,(m,a,d,ms) in enumerate(zip(self._masks,self._masks_areas,self._directions,self._mask_sky)):
-            self._wm.append((m*a).sum()/(2*np.pi))
-            
-            #print(' area sky ', a[ms].sum()/np.pi)
-            #print(' area soil ', a[~ms].sum()/np.pi)
-            
-            self._wm_sky.append((m[ms]*a[ms]).sum()/(a[ms].sum()))
-            self._wm_soil.append((m[~ms]*a[~ms]).sum()/(a[~ms].sum()))
-
-        print(" wm ", self._wm)
-        print(" sky ",self._wm_sky)
-        print(" soil ", self._wm_soil)
-        
+      
         
 
 
-class direct_mask_on_face2:
+class direct_mask_on_face:
     def __init__(self,face,lsun_dir):
         self._face=face
         self._lsun_dir=lsun_dir
@@ -1001,7 +759,7 @@ class direct_mask_on_face2:
             #if sun_dir.Coord()[2]>0.0 :
             #    mask_face=self._face
             #else :
-            mask_face=shadow_caster_ext_on_face(sun_dir,exposed_building,self._face,face_norm,min_area)
+            mask_face=compute_direct_mask_on_face(sun_dir,exposed_building,self._face,face_norm,min_area)
             
             print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
             self._mask_faces.append(mask_face)
@@ -1075,206 +833,7 @@ class direct_mask_on_face2:
                 self._complementary=complementary=glass_face  
 
 
-
-class direct_mask_on_faces:
-    """ simple container to hold computation results """
-    def __init__(self,lfaces,lsun_dir):
-        self._lfaces=lfaces
-        self._lsun_dir=lsun_dir
-        self._mask_faces=[[] for i in range(len(self._lfaces))]
-        self._durations_byfaces=[[]]
-        self._mask_area_sum=[]
-        self._totalduration=[]
-        
-
-    def compute_mask(self,exposed_building,min_area):
-        for i,gf in enumerate(self._lfaces):
-            # re computation of the face normal
-            # shoudl be pointing outward
-            srf = BRep_Tool().Surface(gf)
-            plane = Geom_Plane.DownCast(srf)
-            face_norm = plane.Axis().Direction()
-            if(gf.Orientation()==1):
-                face_norm.Reverse()
-                
-            for j,sun_dir in enumerate(self._lsun_dir):
-                start=timer()
-                mask_face=shadow_caster_ext_on_face(sun_dir,exposed_building,gf,face_norm,min_area)
-                print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
-                end=timer()
-                self._mask_faces[i].append(mask_face)
-                self._durations_byfaces[i].append(end-start)
-                
-                
-        #print(' faces ',self._shadow_faces)
-    
-    def compute_area_and_ratio(self):
-        gpp=GProp_GProps() 
-        self._glass_area=0.0
-        for gf in self._lfaces :
-            brepgprop_SurfaceProperties(gf,gpp)
-            self._glass_area+=gpp.Mass()
-        
-        
-        for vector_idx in range(len(self._lsun_dir)):
-            area_sum=0.0           
-            for face_idx in range(len(self._lfaces)):
-                brepgprop_SurfaceProperties(self._mask_faces[face_idx][vector_idx],gpp)
-                area_sum+=gpp.Mass()
-                
-            self._mask_area_sum.append(area_sum)
-            #self._totalduration.append( self._durations[face_idx])
-        
-        # fraction of flux reaching the face
-        self._ratio_vector=[1.- a/self._glass_area for a in self._mask_area_sum]
-        #print(' shadow area vector ',self._shadow_area_vector)
-        #print(' ratio vector ',self._ratio_vector)
-        
-    def compute_area_and_ratio2(self):
-        gpp=GProp_GProps() 
-        self._lglass_area=[]
-        
-        #self._glass_area=0.0
-        
-        for gf in self._lfaces :
-            brepgprop_SurfaceProperties(gf,gpp)
-            #self._glass_area+=gpp.Mass()
-            self._lglass_area.append(gpp.Mass())
-            
-        self._lglass_area=np.array(self._lglass_area)
-        
-        self._shadows_area=np.zeros((len(self._lfaces),len(self._lsun_dir)))
-        
-        for vector_idx in range(len(self._lsun_dir)):
-            for face_idx in range(len(self._lfaces)):
-                brepgprop_SurfaceProperties(self._mask_faces[face_idx][vector_idx],gpp)
-                self._shadows_area[face_idx,vector_idx]=gpp.Mass()
-        self._mask_value = 1.-self._shadows_area/self._lglass_area[:,np.newaxis]        
-            
-        #self._mask_area_sum_by_face= np.sum(self._shadows_area,axis=1)
-        #self._mask_area_sum_by_position = np.sum(self._shadows_area,axis=0)
-        
-        # fraction of flux reaching the face
-        #self._ratio_vector=[1.- a/self._glass_area for a in self._mask_area_sum]
-        #print(' shadow area vector ',self._shadow_area_vector)
-        #print(' ratio vector ',self._ratio_vector)    
-        
-    def compute_area_and_ratio_byunion(self):
-        """ 
-        could be simpler in terms of code but rely on robustness of OCC to compute on more
-        complex configurations 
-        
-        """
-        totalface=fuse_listOfShape(self._lfaces)
-        gpp=GProp_GProps() 
-        brepgprop_SurfaceProperties(totalface,gpp)
-        totalarea=gpp.Mass()
-        
-        ratio=[]
-        for vector_idx in range(len(self._lsun_dir)):
-            lfaces=[]
-            for face_idx in range(len(self._lfaces)):
-                f=self._mask_faces[face_idx][vector_idx]
-                if not f.IsNull():
-                    lfaces.append(f)
-            totalshadow=fuse_listOfShape(lfaces)
-            brepgprop_SurfaceProperties(totalshadow,gpp)
-            shadowarea=gpp.Mass()
-            ratio.append(shadowarea/totalarea)
-        
-        #print(' shadow area vector ',self._shadow_area_vector)
-        print(' ratio vector by union',ratio)
-        
-        
-    def compute_complementary_face(self):
-        cutter=BOPAlgo_BOP()
-        
-        self._complementary_faces=[[] for i in range(len(self._lfaces))]
-        
-        gpp=GProp_GProps() 
-        
-        #larea=[]
-        
-        for vector_idx in range(len(self._lsun_dir)):
-            #area=0.0           
-            for face_idx in range(len(self._lfaces)): 
-                mask_face=self._mask_faces[face_idx][vector_idx]
-                glass_face=self._lfaces[face_idx]
-                
-                if not mask_face.IsNull():
-                    cutter.Clear()
-                    cutter.SetOperation(BOPAlgo_Operation.BOPAlgo_CUT)
-                    cutter.AddArgument(glass_face)
-                    cutter.AddTool(mask_face)
-                    #cutter.SetFuzzyValue(1e-6)
-                    cutter.Perform()
-                    complementary=cutter.Shape()
-                    #print(' cutter ',complementary)
-                            
-                else :
-                    
-                    complementary=glass_face
-                    
-                
-                self._complementary_faces[face_idx].append(complementary)
-                
-               
-class shadow_on_faces_byray:
-    """ simple container to hold computation results """
-    def __init__(self,lfaces,lsun_dir):
-        self._lfaces=lfaces
-        self._lsun_dir=lsun_dir
-        self._shadow_tab=[[] for i in range(len(self._lfaces))]
-        self._durations_byfaces=[[]]
-        
-
-    def compute_shadow(self,exposed_building,min_area,N):
-        
-        self._N=N
-        for i,gf in enumerate(self._lfaces):
-            # re computation of the face normal
-            # shoudl be pointing outward
-            srf = BRep_Tool().Surface(gf)
-            plane = Geom_Plane.DownCast(srf)
-            face_norm = plane.Axis().Direction()
-            if(gf.Orientation()==1):
-                face_norm.Reverse()
-                
-            for j,sun_dir in enumerate(self._lsun_dir):
-                start=timer()
-                #tab,lshape=shadow_caster_ray(sun_dir,exposed_building,gf,face_norm,N)
-                tab=shadow_caster_ray(sun_dir,exposed_building,gf,face_norm,N)
-                end=timer()
-                self._shadow_tab[i].append(tab)
-                #print(start,' ',end)
-                self._durations_byfaces[i].append(end-start)
-                
-                
-        #print(' faces ',self._shadow_faces)
-    
-    def compute_area_and_ratio(self):
-        
-        self._shadow_area_vector=[]
-        self._totalduration=[]
-        for vector_idx in range(len(self._lsun_dir)):
-            area_sum=0.0           
-            for face_idx in range(len(self._lfaces)):
-                area_sum+=self._shadow_tab[face_idx][vector_idx].sum()
-                
-            self._shadow_area_vector.append(area_sum)
-            #print(self._durations)
-        
-        
-        #self._totalduration.append( self._durations[face_idx])
-            
-        self._ratio_vector=[ a/(self._N*self._N) for a in self._shadow_area_vector]
-        #print(' shadow area vector ',self._shadow_area_vector)
-        print(' ratio vector ray',self._ratio_vector)                
-        
-        
-
-
-
+# the list of faces correspond to a window
 class rtaa_on_faces:
     
     def __init__(self,lfaces,wall_plane,exposed_building,l_sun_dir):
@@ -1284,7 +843,9 @@ class rtaa_on_faces:
         self._exposed_building=exposed_building
         self._lsun_dir=l_sun_dir
         
-        
+    
+    
+    
     def cut_exposed_building(self,cut_size,face_ref):
         
         #cut with face_ref as a reference plane of size cut_size
@@ -1340,7 +901,7 @@ class rtaa_on_faces:
             cutted_building = self.cut_exposed_building(1.,f)
             adjusted_face = self.adjust_face_to_wall_plane(f)   
             print('direct mask')
-            direct_mask = direct_mask_on_face2(adjusted_face,self._lsun_dir)
+            direct_mask = direct_mask_on_face(adjusted_face,self._lsun_dir)
             direct_mask.compute_mask(cutted_building,1e-3)
             direct_mask.shadow_areas()
             direct_mask.face_area()
@@ -1578,8 +1139,69 @@ class project_location:
         self._tz = tf.timezone_at(lng=self._longitude, lat=self._latitude) 
         print("TimeZone : ",self._tz)
 
+    def infer_rtaa_region_from_ifc(self,ifcfile):
+        # set region based on latitude longitude of the project
+        pass
         
+    def set_rtaa_region(self,region_name):
+        # test against a list of name
+        pass
+    
+    def load_irradiance(self):
+        # depend on the location 
+        meteo=pd.read_excel('data/meteo_rtaa.xlsx')
+        self._dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
+        self._irradiance=meteo.assign(time=self._dt_index.values)
+            
+    def irr_sunpos(self):
+        vectors, zen_vec, az_vec = self.sun_vectors(self._dt_index)
+        self._irradiance['zenith']=zen_vec
+        self._irradiance['azimuth']=az_vec
         
+        return vectors, self._irradiance
+                
+        
+    def data_critical_period(self,face):
+        # as a function of region return the correct list of sun_position
+        # compute face normal and determine the time mask
+        srf = BRep_Tool().Surface(face)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(face.Orientation()==1):
+            face_norm.Reverse()
+        
+        critical_period_mask={}
+        critical_period_mask['reunion']={
+        'north':(self._dt_index.strftime("%m-%d")<='04-30')*(self._dt_index.strftime("%m-%d")>='02-01'),
+        'ew':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01'),
+        'south':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01')
+        }
+        critical_period_mask['guyane']={
+        'north':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
+        'ew':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
+        'south':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='08-01')
+        }
+        
+        print(critical_period_mask)
+        
+            
+        # secteur angulaire
+        mask=critical_period_mask['reunion']['north']
+        # filtering
+        v,_=self.irr_sunpos()
+        mask_v = list(np.argwhere(mask).flatten())
+        #print(v)
+        return list(compress(v,mask_v)),self._irradiance[mask]
+     
+    def data_critical_period_day(self,face):
+        v,irradiance = self.data_critical_period(face)
+        print(irradiance[:20])
+        daytime= (90.-irradiance['zenith'])>=0.0
+        print(daytime[:20])
+        mask_v = list(np.argwhere(daytime.values).flatten())
+        return list(compress(v,mask_v)),irradiance[daytime]
+        
+    
     def sun_vectors(self,dtindex):
         # compute the project sun position from a given time serie (local time, without TZ)
         dr_proj = dtindex.tz_localize(self._tz)
@@ -1614,10 +1236,19 @@ class project_location:
         
         
         return sun_to_earth_project,zen_vec,az_vec
-        
+    """
+    class rtaa_location(Enum):
+            reunion='Reunion'
+            martinique='Martinique'
+            guadeloupe='Guadeloupe'
+            guyane='Guyane'
     
+    # to store 
+    class rtaa_config:
+        def __init__(self):
+            pass
     
-    
+    """
 
 if __name__ == "__main__":
 
@@ -1734,12 +1365,16 @@ if __name__ == "__main__":
     """
     
     
-    meteo=pd.read_excel('data/meteo_rtaa.xlsx')
-    meteo=meteo.assign(time=dt.values)
-    meteo['Solar Zenith Angle']=irradiance['Solar Zenith Angle']
+   
     
-    north_mask = (dt.dt.strftime("%m-%d")<='04-30')*(dt.dt.strftime("%m-%d")>='02-01')
-    eso_mask =   (dt.dt.strftime("%m-%d")<='02-28')*(dt.dt.strftime("%m-%d")>='01-01')
+    
+    meteo=pd.read_excel('data/meteo_rtaa.xlsx')
+    dt=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
+    meteo=meteo.assign(time=dt.values)
+    #meteo['Solar Zenith Angle']=irradiance['Solar Zenith Angle']
+    
+    north_mask = (dt.strftime("%m-%d")<='04-30')*(dt.strftime("%m-%d")>='02-01')
+    eso_mask =   (dt.strftime("%m-%d")<='02-28')*(dt.strftime("%m-%d")>='01-01')
     
         
     tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
@@ -1752,7 +1387,8 @@ if __name__ == "__main__":
     #tn_angle=[0.0]
     proj_loc=project_location()
     proj_loc.set_location_from_ifc(ifc_file)
-    proj_loc.set_northing_from_ifc(ifc_file)
+    proj_loc.load_irradiance()
+  
     
     res=[]
     
@@ -1760,7 +1396,7 @@ if __name__ == "__main__":
     list_conf= [ config[n] for n in totake]
     #list_conf=[ c for c in config.values()]
     
-    lirrariance=lirrariance[:1]
+    #lirrariance=lirrariance[:1]
     
     
     x=np.arange(0.15,1.15,.1)
@@ -1780,7 +1416,9 @@ if __name__ == "__main__":
             #    continue
             
             proj_loc.update_northing_from_angle(tn)
+            sun_to_earth_project,irradiance=proj_loc.data_critical_period_day(lglassfaces[0])
             
+            """
             sample= meteo[tmask]
             sample= sample[:]
             #print(sample)
@@ -1795,12 +1433,12 @@ if __name__ == "__main__":
             
             #proj_loc.update_northing_from_angle(tn)
             sun_to_earth_project,zen_vec,az_vec=proj_loc.sun_vectors(dr_loc)
-                
+            """    
             rtaa=rtaa_on_faces(lglassfaces,glassface_extplane[win_id],exposed_building,sun_to_earth_project)
             rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm=x[k])
             
             rtaa.compute_masks()
-            rtaa.compute_cm(sample)
+            rtaa.compute_cm(irradiance)
             #ldiff.append(rtaa._Fdiff)
             #lsky.append(rtaa._ldiffuse[0]._wm)
             

@@ -500,6 +500,8 @@ if __name__ == "__main__":
         l= window_in_wall(w)
         if len(l)>0:
             window_by_wall1[w.id()]=l
+            
+    #window_by_wall1 = get_window_by_wall()
     # collecting ifcwall object that host a window
     ifc_wall_with_windows = [ ifc_file.by_id(id) for id in window_by_wall1.keys()]
      
