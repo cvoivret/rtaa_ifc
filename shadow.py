@@ -1083,7 +1083,7 @@ class project_location:
         tn_X,tn_Y= true_north.DirectionRatios
         
         # true north vector in project coordinate system
-        tn_vec = gp_Vec(tn_X,tn_Y,0.0)
+        self._tn_vec = gp_Vec(tn_X,tn_Y,0.0)
         
         origin = gp_Pnt(0.0,0.0,0.0)
         Xaxis = gp_Ax1(origin,gp_Dir(1.0,0.0,0.0))
@@ -1093,7 +1093,7 @@ class project_location:
         # transformation to apply to convert in project coordinates
         # any vector expressed in world coordinate (sun direction)
         #self._tn_angle_sgn = self._tn_vec.AngleWithRef(gp_Vec(Yaxis.Direction()),gp_Vec(Zaxis.Direction()))
-        self._tn_angle     = tn_vec.Angle(gp_Vec(Yaxis.Direction()))
+        self._tn_angle     = _tn_vec.Angle(gp_Vec(Yaxis.Direction()))
         
         print("Angle true North : ",self._tn_angle)
         
@@ -1109,19 +1109,19 @@ class project_location:
         self._tn_angle     = np.abs(new_tn)
         
         print("Angle true North (updated): ",self._tn_angle)
-        """
+        
         origin = gp_Pnt(0.0,0.0,0.0)
         Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
-        """
+        
         #print("
-        """
-        self._tn_rotation = gp_Trsf()
-        self._tn_rotation.SetRotation(Zaxis,self._tn_angle)
-        self._tn_vec = gp_Vec(Yaxis.Direction()).Transformed(self._tn_rotation)
-        print("Updated angle true North : ",self._tn_angle)
+        
+        tn_rotation = gp_Trsf()
+        tn_rotation.SetRotation(Zaxis,self._tn_angle)
+        self._tn_vec = gp_Vec(Yaxis.Direction()).Transformed(tn_rotation)
+        print("Updated angle true North : ",self._tn_vec)
         #print("Updated Signed angle : ", self._tn_angle_sgn)
-        """
+        
         
     
     def set_location_from_ifc(self,ifc_file):
@@ -1162,13 +1162,6 @@ class project_location:
                 
         
     def data_critical_period(self,face):
-        # as a function of region return the correct list of sun_position
-        # compute face normal and determine the time mask
-        srf = BRep_Tool().Surface(face)
-        plane = Geom_Plane.DownCast(srf)
-        face_norm = plane.Axis().Direction()
-        if(face.Orientation()==1):
-            face_norm.Reverse()
         
         critical_period_mask={}
         critical_period_mask['reunion']={
@@ -1182,11 +1175,38 @@ class project_location:
         'south':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='08-01')
         }
         
-        print(critical_period_mask)
+        
+        # as a function of region return the correct list of sun_position
+        # compute face normal and determine the time mask
+        srf = BRep_Tool().Surface(face)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(face.Orientation()==1):
+            face_norm.Reverse()
+        
+        # projection of normal on the XY plane
+        
+        Zvec=gp_Vec(0.0,0.0,1.0)
+        
+        projected = Zvec.CrossCrossed(gp_Vec(face_norm),Zvec)
+        print("projected ",projected.Coord())
+        to_tn = projected.AngleWithRef(self._tn_vec,Zvec)
+        print(" angle_tn ",to_tn)
+        orientation=None
+        if(abs(to_tn)<=np.pi/4.):
+            orientation='north'
+        elif ( (abs(to_tn)>np.pi/4.) & (abs(to_tn)<=3.*np.pi/4.)):
+            orientation='ew'
+        elif ( abs(to_tn)>3.*np.pi/4.):
+            orientation='south'
+            
+            
+        print(' orientation mask ',orientation )
+        
         
             
         # secteur angulaire
-        mask=critical_period_mask['reunion']['north']
+        mask=critical_period_mask['reunion'][orientation]
         # filtering
         v,_=self.irr_sunpos()
         mask_v = list(np.argwhere(mask).flatten())
@@ -1195,9 +1215,9 @@ class project_location:
      
     def data_critical_period_day(self,face):
         v,irradiance = self.data_critical_period(face)
-        print(irradiance[:20])
+        #print(irradiance[:20])
         daytime= (90.-irradiance['zenith'])>=0.0
-        print(daytime[:20])
+        #print(daytime[:20])
         mask_v = list(np.argwhere(daytime.values).flatten())
         return list(compress(v,mask_v)),irradiance[daytime]
         
@@ -1311,7 +1331,32 @@ if __name__ == "__main__":
     
     external_shell= get_external_shell(core_solids)
     
+    # geometry processing to create data : generic
+    # external shell
+    # exterior_wall_normale_plane
+    # biggest face along normal(shape,normal,threshold)
     
+    # idea : when getting building, unifysameDomain systematically to simplify shape
+    
+    
+    
+    
+    
+    
+    # rtaa_on_windows(ifcfile, winlist , building as list of ifc class // or ifcid ?)
+    # # data caching
+    # wall shapes ([] or [idlist]) : dict(id,shape)
+    # window shapes( [] or [idlist]) : dict(id,shape)
+    
+    # # data linking
+    # exterior wall[wall_id]=(normal,plane)
+    # window in wall(wallid)
+    # 
+    
+    # # prep data for few elements
+    # preprocess( list window id)
+    #     from the list, get the hosting wall normal 
+    #     populate the necessayr data structure
     
     
     windows_by_wall_id = dict()
@@ -1344,45 +1389,14 @@ if __name__ == "__main__":
             glassface_bywindowid[win_id].extend(gfaces)
             glassface_extplane[win_id]=plane_by_exterior_wall_id[w_id]
         
-    """
-    irradiance2018=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2018.csv',skiprows=[0,1])
-    irradiance2017=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2017.csv',skiprows=[0,1])
-    irradiance2019=pd.read_csv('data/irradiance_data/2659942_-21.15_55.62_2019.csv',skiprows=[0,1])
-    lirrariance = [irradiance2017,irradiance2018,irradiance2019]
-    irradiance_all = pd.concat(lirrariance)
-    
-    
-    
-    irradiance = irradiance2018
-    # creating datetime object
-    col= irradiance.columns
-    dt=pd.to_datetime(irradiance[col[:5]])
-    # parsing usefull datas
-    irr_col=['Clearsky DHI','Clearsky DNI', 'Clearsky GHI',
-            'DHI', 'DNI','GHI']
-    irradiance_only=irradiance[irr_col]
-    irradiance_only=irradiance_only.assign(time=dt.values)
-    """
-    
-    
-   
-    
-    
-    meteo=pd.read_excel('data/meteo_rtaa.xlsx')
-    dt=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
-    meteo=meteo.assign(time=dt.values)
-    #meteo['Solar Zenith Angle']=irradiance['Solar Zenith Angle']
-    
-    north_mask = (dt.strftime("%m-%d")<='04-30')*(dt.strftime("%m-%d")>='02-01')
-    eso_mask =   (dt.strftime("%m-%d")<='02-28')*(dt.strftime("%m-%d")>='01-01')
-    
+
         
     tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
     
     orientations_name=['NORD','EST','SUD','OUEST']
-    time_mask = [north_mask,eso_mask,eso_mask,eso_mask]
+    #time_mask = [north_mask,eso_mask,eso_mask,eso_mask]
     
-    config={name:(a,m) for name,a,m in zip(orientations_name,tn_angle,time_mask)}
+    config={name:(angle) for name,angle in zip(orientations_name,tn_angle)}
         
     #tn_angle=[0.0]
     proj_loc=project_location()
@@ -1394,46 +1408,23 @@ if __name__ == "__main__":
     
     totake=orientations_name#['NORD']
     list_conf= [ config[n] for n in totake]
-    #list_conf=[ c for c in config.values()]
-    
-    #lirrariance=lirrariance[:1]
-    
+        
     
     x=np.arange(0.15,1.15,.1)
     
-        
-    
-    
-
     cm_orientation=[]
-    for tn,tmask in list_conf:
+    for tn in list_conf:
         cm_id=[]
         for (k,win_id) in enumerate(glassface_bywindowid.keys()):
             
             lglassfaces=glassface_bywindowid[win_id]
             print(' window id ', win_id)
-            #if win_id!=833:
-            #    continue
+            if win_id!=833:
+                continue
             
             proj_loc.update_northing_from_angle(tn)
             sun_to_earth_project,irradiance=proj_loc.data_critical_period_day(lglassfaces[0])
-            
-            """
-            sample= meteo[tmask]
-            sample= sample[:]
-            #print(sample)
-            
-            daytime= 90.-sample['Solar Zenith Angle']>0.0
-            sample=sample[daytime]
-            #print(sample)
-            
-            
-            
-            dr_loc = pd.DatetimeIndex(sample['time']) 
-            
-            #proj_loc.update_northing_from_angle(tn)
-            sun_to_earth_project,zen_vec,az_vec=proj_loc.sun_vectors(dr_loc)
-            """    
+                        
             rtaa=rtaa_on_faces(lglassfaces,glassface_extplane[win_id],exposed_building,sun_to_earth_project)
             rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm=x[k])
             
@@ -1483,113 +1474,6 @@ if __name__ == "__main__":
     plt.show()
     
     
-
-
-    """
-    cm_year=[]
-    ldiff=[]
-    lsky=[]
-    for irr in lirrariance:
-        irr_only=irr[irr_col]
-        dt=pd.to_datetime(irr[col[:5]])
-        irr_only=irr.assign(time=dt.values)
-        
-        meteo['Solar Zenith Angle']=irr_only['Solar Zenith Angle']
-        irr_only=meteo
-        
-        cm_orientation=[]
-        for tn,tmask in list_conf:
-            cm_id=[]
-            for (k,win_id) in enumerate(glassface_bywindowid.keys()):
-                
-                lglassfaces=glassface_bywindowid[win_id]
-                print(' window id ', win_id)
-                if win_id!=1112:
-                    continue
-                
-                proj_loc.update_northing_from_angle(tn)
-                
-                sample= irr_only[tmask]
-                sample= sample[:100]
-                
-                daytime= 90.-sample['Solar Zenith Angle']>0.0
-                sample=sample[daytime]
-                print(sample)
-                
-                
-                
-                dr_loc = pd.DatetimeIndex(sample['time']) 
-                
-                #proj_loc.update_northing_from_angle(tn)
-                sun_to_earth_project,zen_vec,az_vec=proj_loc.sun_vectors(dr_loc)
-                    
-                rtaa=rtaa_on_faces(lglassfaces,glassface_extplane[win_id],exposed_building,sun_to_earth_project)
-                rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm=x[k])
-                
-                rtaa.compute_masks()
-                rtaa.compute_cm(sample)
-                ldiff.append(rtaa._Fdiff)
-                lsky.append(rtaa._ldiffuse[0]._wm)
-                
-                
-                cm_id.append(rtaa._cm)
-                
-            cm_orientation.append(cm_id)
-        
-        cm_year.append(cm_orientation)
-    
-    """
-
-    
-    
-    """
-    fig = plt.figure()#figsize=(4., 4.))
-    grid = ImageGrid(fig, 111,  # similar to subplot(111)
-                 nrows_ncols=(1,len(ldiff)),  # creates 2x2 grid of axes
-                 axes_pad=0.1,  # pad between axes in inch.
-                 )
-    #lmask=[ x[-1] for x in ldiff]
-    skyonly=False
-    for ax,(dir,sky,mask) in zip(grid, ldiff):
-        
-        skymask=sky[0]
-        x=dir[0][:,0]
-        y=dir[0][:,1]
-        z=(mask[0]).flatten()
-        
-        if skyonly:
-            x=x[skymask]
-            y=y[skymask]
-            z=z[skymask]
-        
-        triang = tri.Triangulation(x, y)
-        ax.scatter(x,y,s=z)
-        ax.set_aspect('equal')
-        tcf = ax.tricontourf(triang, z,cmap=plt.colormaps.get_cmap('viridis'))
-        ax.scatter(x,y)
-
-    fig.colorbar(tcf)
-    plt.show()
-    
-    # valid for the file test
-    x=np.arange(0.1,1.1,.1)
-    rta_north= [0.95,0.88,0.83,0.8,0.77,0.76,.75,.75,0.74,0.74]
-    plt.plot(x,rta_north,'-o',label='rta')
-    plt.plot(x,lcm,'-o',label='ifc')
-    plt.legend()
-    plt.show()
-    """
-    
-    """
-    result=pd.DataFrame()
-    result.index = df.index
-    for id,sof in sofdict.items():
-        name=ratio_by_id[id]
-        result[id]=sof._ratio_vector
-    
-    plt.plot(result,'o-')
-    plt.show()
-    """
     """
     def rgb_color(r, g, b):
         return Quantity_Color(r, g, b, Quantity_TOC_RGB)
