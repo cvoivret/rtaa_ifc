@@ -56,6 +56,8 @@ from OCC.Core.Bnd import Bnd_Box
 from OCC.Core.BRepBndLib import brepbndlib
 
 import OCC.Core.ShapeFix as ShapeFix_Shape
+from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
+
 
 from OCC.Core.IntCurvesFace import IntCurvesFace_ShapeIntersector
 
@@ -119,6 +121,34 @@ def shapes_as_solids(lshape):
         lsolid2.append(fixer.Shape())
          
     return lsolid2
+
+
+    
+def ifcelement_as_solid(element):
+    if element.Representation is None:
+        return None
+    shape=create_shape(setting, element).geometry
+    #print(shape)
+    solids=shapes_as_solids([shape])
+    #print(solids)
+    solid=None
+    if( len(solids)==1):
+        solid = solids[0]
+    else :
+        solid = fuse_listOfShape(solids)
+    
+    shu=ShapeUpgrade_UnifySameDomain(solid)
+    shu.Build()
+    solid=shu.Shape()    
+    #print(solid)
+    
+    # add unifiysamedomain ?
+    
+    return solid
+        
+        
+     
+
 
 def get_external_shell(lshape):
     """
@@ -1093,7 +1123,7 @@ class project_location:
         # transformation to apply to convert in project coordinates
         # any vector expressed in world coordinate (sun direction)
         #self._tn_angle_sgn = self._tn_vec.AngleWithRef(gp_Vec(Yaxis.Direction()),gp_Vec(Zaxis.Direction()))
-        self._tn_angle     = _tn_vec.Angle(gp_Vec(Yaxis.Direction()))
+        self._tn_angle =self._tn_vec.Angle(gp_Vec(Yaxis.Direction()))
         
         print("Angle true North : ",self._tn_angle)
         
@@ -1160,7 +1190,24 @@ class project_location:
         
         return vectors, self._irradiance
                 
+    
+    def face_orientation_angle_tn(self,face):
+        srf = BRep_Tool().Surface(face)
+        plane = Geom_Plane.DownCast(srf)
+        face_norm = plane.Axis().Direction()
+        if(face.Orientation()==1):
+            face_norm.Reverse()
         
+        # projection of normal on the XY plane
+        
+        Zvec=gp_Vec(0.0,0.0,1.0)
+        
+        projected = Zvec.CrossCrossed(gp_Vec(face_norm),Zvec)
+        #print("projected ",projected.Coord())
+        to_tn = projected.AngleWithRef(self._tn_vec,Zvec)
+        #print(" angle_tn ",to_tn)
+        return to_tn
+    
     def data_critical_period(self,face):
         
         critical_period_mask={}
@@ -1178,20 +1225,8 @@ class project_location:
         
         # as a function of region return the correct list of sun_position
         # compute face normal and determine the time mask
-        srf = BRep_Tool().Surface(face)
-        plane = Geom_Plane.DownCast(srf)
-        face_norm = plane.Axis().Direction()
-        if(face.Orientation()==1):
-            face_norm.Reverse()
+        to_tn=self.face_orientation_angle_tn(face)
         
-        # projection of normal on the XY plane
-        
-        Zvec=gp_Vec(0.0,0.0,1.0)
-        
-        projected = Zvec.CrossCrossed(gp_Vec(face_norm),Zvec)
-        print("projected ",projected.Coord())
-        to_tn = projected.AngleWithRef(self._tn_vec,Zvec)
-        print(" angle_tn ",to_tn)
         orientation=None
         if(abs(to_tn)<=np.pi/4.):
             orientation='north'
@@ -1256,19 +1291,213 @@ class project_location:
         
         
         return sun_to_earth_project,zen_vec,az_vec
-    """
-    class rtaa_location(Enum):
-            reunion='Reunion'
-            martinique='Martinique'
-            guadeloupe='Guadeloupe'
-            guyane='Guyane'
     
-    # to store 
-    class rtaa_config:
-        def __init__(self):
-            pass
+   
     
-    """
+    
+class rtaa_solar_study:
+    def __init__(self,ifcfilename):
+        setting=ifcopenshell.geom.settings()
+        setting.set(setting.USE_PYTHON_OPENCASCADE, True)
+        self._ifc_file= ifcopenshell.open(filename)
+        self._solar_elements=dict()
+        self._building_elements=dict()
+        print(" ifc file ",self._ifc_file)
+        
+        self._proj_loc=project_location()
+        self._proj_loc.set_location_from_ifc(self._ifc_file)
+        self._proj_loc.set_northing_from_ifc(self._ifc_file)
+        self._proj_loc.load_irradiance()
+    
+    def config_from_file(json_file):
+        # read ids and class to set elements of interest and buildings
+        # add the element 
+        #build the geometry
+        pass
+    
+    def _add_elements(self,ids=[],ltypes=[],container=None):
+        if((len(ids)==0) & (len(ltypes)==0)):
+            print(" Error : provides ids or classes to set elements of interest")
+            return
+        if container is None:
+            print(" Error : provide a container")
+            
+        element_set=set()
+        for id in ids:
+            element_set.add(self._ifc_file.by_id(id))
+        
+        for t in ltypes:
+            [element_set.add(el) for el in self._ifc_file.by_type(t)]
+        
+        
+        
+        if container=="solar":
+            self._solar_elements={el.id():el for el in element_set}
+            
+        elif container=="building":
+            self._building_elements={el.id():el for el in element_set}
+        
+    
+    
+    def _remove_elements_by_ids(self,ids=[],container=None):
+        if(len(ids)==0):
+            print(" Error : provides ids or classes to set elements of interest")
+            return
+        if container is None:
+            print(" Error : provide a container")
+            
+                    
+        if container=="solar":
+            for id in ids:
+                self._solar_elements.pop(id)
+        elif container=="building":
+            for id in ids:
+                self._building_elements.pop(id)
+    
+    
+    def add_solar_elements(self,ids=[],types=[]):
+        self._add_elements(ids,types,'solar')
+        print(" Number of elements for solar analysis: ",len(self._solar_elements.keys()))
+    
+    def remove_solar_elements(self,ids=[]):
+        self._remove_elements(ids,types,'solar')
+        
+    def add_building_elements(self,ids=[],types=[]):
+        self._add_elements(ids,types,'building')
+        print(" Number of elements in building: ",len(self._building_elements.keys()))
+    
+    def remove_building_elements(self,ids=[]):
+        self._remove_elements(ids,types,'building')    
+                
+        
+    def set_geometries(self):
+        self._building_solid()
+        self._solar_faces()
+                
+    
+    def _solar_faces(self):
+        solar_shapes = { x.id():ifcelement_as_solid(x) 
+                            for x in self._solar_elements.values() }
+        
+        self._solar_faces=defaultdict(list)
+        self._hosting_solar_id=dict()
+        
+        for id,shape in solar_shapes.items():
+             
+            if self._solar_elements[id].is_a('IfcWall'):
+                hosting_wall_id=id
+            elif((self._solar_elements[id].is_a('IfcWindow')) | 
+                  (self._solar_elements[id].is_a('IfcDoors'))):
+                el = self._solar_elements[id]
+                citedby=list(ifc_file.get_inverse(el.FillsVoids[0].RelatingOpeningElement))
+                for c in citedby:
+                    if c.is_a('IfcRelVoidsElement'):
+                        hosting_wall=c.RelatingBuildingElement
+                        hosting_wall_id = hosting_wall.id()
+            else:
+                print("Error, solar element not wall window or door")
+            self._hosting_solar_id[id]=hosting_wall_id
+            
+            wall_norm,plane = self._wall_norm_plane[hosting_wall_id]
+            print(wall_norm)
+            faces = biggestface_along_vector(shape,wall_norm)
+            self._solar_faces[id]=faces
+        
+        print(self._solar_faces)  
+        # get element
+        # get eventual hosting wall (window/doors)
+        # get normal
+        # get biggest face along normal
+        pass
+        
+    def _building_solid(self):
+        
+        building_shapes = { x.id():ifcelement_as_solid(x) 
+                            for x in self._building_elements.values() }
+        
+        #print(list(building_shapes.values()))
+        
+        self._building= fuse_listOfShape(list(building_shapes.values()))
+        # unify ?
+        
+        # get spaces geometries
+        ifcspaces=self._ifc_file.by_type('IfcSpace')
+        in_building=[ space.id() not in list(self._building_elements.keys()) for space in ifcspaces]
+        
+        space_shapes = [ifcelement_as_solid(x) for x in compress(ifcspaces,in_building) if x.Representation is not None]
+        print(ifcspaces)
+        print(space_shapes)
+        print([self._building]+space_shapes)
+        
+        solids=shapes_as_solids([self._building]+space_shapes)
+        #print(solids)
+        #filled_building=fuse_listOfShape(solids)
+        
+        external_shell = get_external_shell(solids)
+        
+        
+        wall_shapes={ el.id():building_shapes[el.id()] for el in self._building_elements.values() if el.is_a()=='IfcWall'}
+        self._wall_norm_plane={}
+        for id,wall_shape in wall_shapes.items():
+            self._wall_norm_plane[id]=exterior_wall_normal_and_plane(wall_shape,external_shell)
+        
+    def display(self):
+        def rgb_color(r, g, b):
+            return Quantity_Color(r, g, b, Quantity_TOC_RGB)
+    
+        x=50/256
+        gray=rgb_color(x, x, x)
+    
+        display, start_display, add_menu, add_function_to_menu = init_display()
+    
+        display.DisplayShape(self._building,color=gray,transparency=0.5)
+        gpp=GProp_GProps()
+        
+        for id,facelist in self._solar_faces.items():
+            idhost = self._hosting_solar_id[id] 
+            norm,_ =self._wall_norm_plane[idhost]
+            norm=gp_Vec(norm)
+            for f in facelist:
+                display.DisplayShape(f,color='RED',transparency=0.9)
+                
+                brepgprop_SurfaceProperties(f,gpp)
+                mc=gpp.CentreOfMass()
+                display.DisplayVector(norm,mc)
+        
+        display.FitAll()
+        
+        start_display()
+        
+        
+    
+    def run(self):
+        
+        
+        self._results=dict()
+        
+        for id,facelist in self._solar_faces.items():
+            idhost = self._hosting_solar_id[id] 
+            norm,plane =self._wall_norm_plane[idhost]
+            
+            sun_to_earth_project,irradiance=self._proj_loc.data_critical_period_day(facelist[0])
+                       
+            rtaa=rtaa_on_faces(facelist,plane,self._building,sun_to_earth_project)
+            #rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm=x[k])
+            
+            rtaa.compute_masks()
+            rtaa.compute_cm(irradiance)
+            self._results[id]=rtaa
+            
+        
+    def cm(self):
+        return { id : r._cm for id,r in self._results.items()} 
+        
+    def raw_result(self):
+        #return dict of dataframes
+        pass
+            
+            
+     
 
 if __name__ == "__main__":
 
@@ -1289,6 +1518,9 @@ if __name__ == "__main__":
     filename = 'data/Rtaa_validation_run_joues2.ifc'
     #ifc_file= ifcopenshell.open('data/simple_reunion_northaligned.ifc')
     #ifc_file= ifcopenshell.open('data/Rtaa_validation_run.ifc')
+
+    
+    
 
     ifc_file= ifcopenshell.open(filename)
     
@@ -1312,6 +1544,51 @@ if __name__ == "__main__":
     ifcslabs=ifc_file.by_type('IfcSlab')
     ifcproxys=ifc_file.by_type('IfcBuildingElementProxy')
     
+    
+    rss=rtaa_solar_study(filename)
+    
+    rss.add_building_elements([],['IfcWall','IfcSlab'])
+    
+    rss.add_solar_elements([],['IfcWindow'])
+    
+    rss.set_geometries()
+    #rss.display()
+    
+    tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
+    orientations_name=['NORD','EST','SUD','OUEST']
+    
+    config={name:(angle) for name,angle in zip(orientations_name,tn_angle)}
+        
+    res=[]
+    
+    totake=orientations_name#['NORD']
+    list_conf= [ config[n] for n in totake]
+    
+    x=np.arange(0.15,1.15,.1)
+    cm_orientation=[]   
+    for angle in list_conf:
+        rss._proj_loc.update_northing_from_angle(angle)
+        rss.run()
+        cm_orientation.append(rss.cm())
+        
+    rtaa_data= pd.read_excel('data/h85_l50_ec15_joues.xlsx')
+        
+    colors=['r','g','b','k']
+    marks=['x','d','o']
+    #for cmo,m in zip(cm_orientation,marks):
+    for data,name,c in zip(cm_orientation,totake,colors):
+        plt.plot(x,data,'-',color=c,marker='o',lw=2,label=name+'_computed')
+    
+    for name,c in zip(totake,colors):
+        plt.plot(x,rtaa_data[name],'--',color=c,lw=2,label=name+'_ref')
+    
+    plt.legend()
+    plt.show()
+    
+    
+    
+    cdscd
+    
         
     # partial building to compute external shell and exterior wall
     wall_shapes  = [create_shape(setting, x).geometry for x in ifcwalls if x.Representation is not None]
@@ -1331,19 +1608,33 @@ if __name__ == "__main__":
     
     external_shell= get_external_shell(core_solids)
     
-    # geometry processing to create data : generic
-    # external shell
-    # exterior_wall_normale_plane
-    # biggest face along normal(shape,normal,threshold)
-    
-    # idea : when getting building, unifysameDomain systematically to simplify shape
+           
     
     
     
     
     
     
-    # rtaa_on_windows(ifcfile, winlist , building as list of ifc class // or ifcid ?)
+    
+    # rtaa_solar_on_elements(ifcfile)
+    # set element of intereset( list of ID or elementclass)
+    #   can put window or doors or wall (maybe)
+    # set element of building( list ID or list of class)
+    #
+    # populate the necessayr geometry data structure
+    #   be generic in terms of name (window/door/wall)
+    
+    # run the loop over each element
+    #   check for data precense
+    #   element are reduced to faces that we apply the method on
+    
+    # return a list of cm for each element
+    
+    
+    # do the same for ventilation !
+    
+    
+    
     # # data caching
     # wall shapes ([] or [idlist]) : dict(id,shape)
     # window shapes( [] or [idlist]) : dict(id,shape)
@@ -1356,7 +1647,11 @@ if __name__ == "__main__":
     # # prep data for few elements
     # preprocess( list window id)
     #     from the list, get the hosting wall normal 
-    #     populate the necessayr data structure
+    #     populate the necessayr geometry data structure
+    
+    
+    
+    
     
     
     windows_by_wall_id = dict()

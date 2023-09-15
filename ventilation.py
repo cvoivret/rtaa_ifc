@@ -176,10 +176,10 @@ def biggestface_along_vector(shape,vector,tol=1e-6,ratio=0.9):
                 area>maxarea*ratio]
     return gfaces
 
-def ifcelement_as_solid(ifcwin):
+def ifcelement_as_solid(element):
         if ifcwin.Representation is None:
             return None
-        shape=create_shape(setting, ifcwin).geometry
+        shape=create_shape(setting, element).geometry
         solids=shapes_as_solids([shape])
         solid=fuse_listOfShape(solids)
         return solid
