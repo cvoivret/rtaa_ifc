@@ -1,6 +1,7 @@
 from collections import defaultdict
 import itertools
-from itertools import compress
+from itertools import compress,tee,combinations
+from collections import Counter
 from array import array
 import numpy as np
 import pandas as pd
@@ -38,8 +39,15 @@ from OCC.Core.BRepTools import breptools_UVBounds
 
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.GeomLProp import GeomLProp_SLProps
+
 from OCC.Core.gp import gp_Pnt,gp_Dir,gp_Vec,gp_Pln,gp_Lin,gp_Trsf,gp_Ax3,gp_Ax1
-from OCC.Core.Geom import Geom_Plane
+from OCC.Core.gp import gp_Pnt2d,gp_Dir2d,gp_Vec2d,gp_Lin2d
+
+from OCC.Core.Geom import Geom_Plane,Geom_Line
+from OCC.Core.GeomAPI import GeomAPI_IntCS,GeomAPI_ProjectPointOnSurf
+from OCC.Core.GeomProjLib import geomprojlib_Project
+from OCC.Core.GeomProjLib import geomprojlib_ProjectOnPlane
+
 
 from OCC.Core.TopoDS import TopoDS_Face
 from OCC.Core.TopTools import TopTools_ListOfShape,TopTools_IndexedMapOfShape
@@ -47,6 +55,13 @@ from OCC.Core.TopExp import topexp_MapShapes
 from OCC.Core.TopAbs import TopAbs_SOLID,TopAbs_FACE,TopAbs_SHELL,TopAbs_WIRE
 
 from OCC.Extend.TopologyUtils import TopologyExplorer, WireExplorer
+
+from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
+
+
+from OCC.Core.ProjLib import ProjLib_ProjectOnPlane
+from OCC.Core.ProjLib import projlib_Project
+
  
 from OCC.Core.BOPAlgo import BOPAlgo_BOP,BOPAlgo_Operation
 from OCC.Core.BOPAlgo import BOPAlgo_CellsBuilder
@@ -58,6 +73,10 @@ from OCC.Core.BRepBndLib import brepbndlib
 import OCC.Core.ShapeFix as ShapeFix_Shape
 from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 
+from OCC.Core.Geom2dAPI import Geom2dAPI_InterCurveCurve
+from OCC.Core.GeomAPI import geomapi_To3d
+from OCC.Core.Geom2d import Geom2d_Line
+from OCC.Core.ElCLib import elclib_Parameter,elclib_To3d,elclib_Value
 
 from OCC.Core.IntCurvesFace import IntCurvesFace_ShapeIntersector
 
@@ -65,7 +84,12 @@ from OCC.Core.Standard import standard_Purge
 
 from OCC.Extend.DataExchange import write_stl_file
 
-
+def pairwise(iterable):
+    # pairwise('ABCDEFG') --> AB BC CD DE EF FG
+    a, b = tee(iterable)
+    next(b, None)
+    return zip(a, b)
+    
 def fuse_listOfShape(los,FuzzyValue=1e-6):
     """
     Simple funtion to wrap boilerplate code
@@ -160,7 +184,9 @@ def get_external_shell(lshape):
        
     #unionize solids
     unionsolid=fuse_listOfShape(lshape)
-    
+    shu=ShapeUpgrade_UnifySameDomain(unionsolid)
+    shu.Build()
+    unionsolid=shu.Shape()
     # Create the bounding box of the unioned model
     box=Bnd_Box()
     brepbndlib.Add(unionsolid,box)
@@ -205,6 +231,10 @@ def get_external_shell(lshape):
     commonshell=common.Shape()
     
     BOPTools_AlgoTools_OrientFacesOnShell(commonshell)
+    
+    shu=ShapeUpgrade_UnifySameDomain(commonshell)
+    shu.Build()
+    commonshell=shu.Shape()
     
     return commonshell
 
@@ -562,11 +592,14 @@ def exterior_wall_normal_and_plane(wall_shape,external_shell):
     #common.SetFuzzyValue(1e-6)
     common.Perform()
     commonshell2=common.Shape() 
-        
     
+    print(commonshell2)
+    
+    faces=list(TopologyExplorer(commonshell2).faces())
+    print(len(faces))
     # exteriro wall !!
-    if commonshell2:
-        faces=list(TopologyExplorer(commonshell2).faces())
+    if len(faces)>0:
+        
         norm_area=defaultdict(float)
         norm_map=defaultdict(list)
         for f in faces:
@@ -581,6 +614,7 @@ def exterior_wall_normal_and_plane(wall_shape,external_shell):
             brepgprop_SurfaceProperties(f,gpp)
             norm_area[face_norm_coord]+=gpp.Mass()
             norm_map[face_norm_coord].append(f)
+        print(norm_map)
         wall_norm = max(norm_area, key=norm_area.get)   
                 
         #print(norm_area)
@@ -616,7 +650,7 @@ def exterior_wall_normal_dict(wallwindow,external_shell):
 def biggestface_along_vector(shape,vector,tol=1e-6,ratio=0.9):
     gpp=GProp_GProps()
     faces=list(TopologyExplorer(shape).faces())
-    #print(" nb face par fenetre ", len(faceswin))
+    print(" nb face par fenetre ", len(faces))
     facelist=[]
     facearea=[]
     #facenormal=[]
@@ -642,10 +676,34 @@ def biggestface_along_vector(shape,vector,tol=1e-6,ratio=0.9):
             facelist.append(f)
             #facenormal.append(face_norm)
     #print('\n window ',i)
+    if(len(facearea)==0):
+        # no faces along given vector
+        return []
+    
+    totalarea=sum(facearea)
+    
+    count=Counter(facearea)
+    area_by_count={area: c*area for area,c in count.items()}
+    area_by_count2={area: c*area/totalarea for area,c in count.items()}
+    
+    significative_area = [area for area,v in area_by_count2.items() if v >.2]
+    gfaces = [f for a,f in zip(facearea,facelist) if a in significative_area]
+    
+    print(count)
+    print(area_by_count)
+    print(area_by_count2)
+    print(significative_area)
+    print([a for a in facearea if a in significative_area])
+    
+    # une grande face 
+    
+     
     
     maxarea=max(facearea)
-    gfaces=[ face for area,face in zip(facearea,facelist) if 
-                area>maxarea*ratio]
+    facearea.sort()
+    print(" face area sorted ",facearea)
+    #gfaces=[ face for area,face in zip(facearea,facelist) if 
+    #           area>maxarea*ratio]
     return gfaces
 
 def biggestfaces_along_normaldict(wallwindow,wallnormal):
@@ -1328,8 +1386,7 @@ class rtaa_solar_study:
         
         for t in ltypes:
             [element_set.add(el) for el in self._ifc_file.by_type(t)]
-        
-        
+          
         
         if container=="solar":
             self._solar_elements={el.id():el for el in element_set}
@@ -1376,13 +1433,13 @@ class rtaa_solar_study:
                 
     
     def _solar_faces(self):
-        solar_shapes = { x.id():ifcelement_as_solid(x) 
+        self._solar_shapes = { x.id():ifcelement_as_solid(x) 
                             for x in self._solar_elements.values() }
         
         self._solar_faces=defaultdict(list)
         self._hosting_solar_id=dict()
         
-        for id,shape in solar_shapes.items():
+        for id,shape in self._solar_shapes.items():
              
             if self._solar_elements[id].is_a('IfcWall'):
                 hosting_wall_id=id
@@ -1398,24 +1455,24 @@ class rtaa_solar_study:
                 print("Error, solar element not wall window or door")
             self._hosting_solar_id[id]=hosting_wall_id
             
-            wall_norm,plane = self._wall_norm_plane[hosting_wall_id]
-            print(wall_norm)
-            faces = biggestface_along_vector(shape,wall_norm)
-            self._solar_faces[id]=faces
-        
-        print(self._solar_faces)  
-        # get element
-        # get eventual hosting wall (window/doors)
-        # get normal
-        # get biggest face along normal
-        pass
+            print(" wall norm plane ",hosting_wall_id," ",self._wall_norm_plane[hosting_wall_id])
+            if(self._wall_norm_plane[hosting_wall_id]):
+                wall_norm,plane = self._wall_norm_plane[hosting_wall_id]
+                print(wall_norm.Coord())
+                print(id)
+            
+                faces = biggestface_along_vector(shape,wall_norm)
+                if len(faces)>0:
+                    self._solar_faces[id]=faces
+            else :
+                print(" No normal found for this window ",id)
+        #print(self._solar_faces)  
+
         
     def _building_solid(self):
         
         building_shapes = { x.id():ifcelement_as_solid(x) 
                             for x in self._building_elements.values() }
-        
-        #print(list(building_shapes.values()))
         
         self._building= fuse_listOfShape(list(building_shapes.values()))
         # unify ?
@@ -1425,23 +1482,25 @@ class rtaa_solar_study:
         in_building=[ space.id() not in list(self._building_elements.keys()) for space in ifcspaces]
         
         space_shapes = [ifcelement_as_solid(x) for x in compress(ifcspaces,in_building) if x.Representation is not None]
-        print(ifcspaces)
-        print(space_shapes)
-        print([self._building]+space_shapes)
+        #print(ifcspaces)
+        #print(space_shapes)
+        #print([self._building]+space_shapes)
         
         solids=shapes_as_solids([self._building]+space_shapes)
         #print(solids)
         #filled_building=fuse_listOfShape(solids)
         
-        external_shell = get_external_shell(solids)
+        self._external_shell = get_external_shell(solids)
         
         
         wall_shapes={ el.id():building_shapes[el.id()] for el in self._building_elements.values() if el.is_a()=='IfcWall'}
         self._wall_norm_plane={}
         for id,wall_shape in wall_shapes.items():
-            self._wall_norm_plane[id]=exterior_wall_normal_and_plane(wall_shape,external_shell)
+            self._wall_norm_plane[id]=exterior_wall_normal_and_plane(wall_shape,self._external_shell)
         
-    def display(self):
+    def display(self,disp_external_shell=False,disp_solar_shapes=False):
+        
+        
         def rgb_color(r, g, b):
             return Quantity_Color(r, g, b, Quantity_TOC_RGB)
     
@@ -1451,6 +1510,13 @@ class rtaa_solar_study:
         display, start_display, add_menu, add_function_to_menu = init_display()
     
         display.DisplayShape(self._building,color=gray,transparency=0.5)
+        
+        if disp_external_shell:
+            display.DisplayShape(self._external_shell,color='BLUE',transparency=0.5)
+            
+        if disp_solar_shapes:
+            [display.DisplayShape(s,color='GREEN',transparency=0.5) for s in self._solar_shapes.values()]
+        
         gpp=GProp_GProps()
         
         for id,facelist in self._solar_faces.items():
@@ -1458,7 +1524,7 @@ class rtaa_solar_study:
             norm,_ =self._wall_norm_plane[idhost]
             norm=gp_Vec(norm)
             for f in facelist:
-                display.DisplayShape(f,color='RED',transparency=0.9)
+                display.DisplayShape(f,color='RED',transparency=0.1)
                 
                 brepgprop_SurfaceProperties(f,gpp)
                 mc=gpp.CentreOfMass()
@@ -1495,8 +1561,446 @@ class rtaa_solar_study:
     def raw_result(self):
         #return dict of dataframes
         pass
+
+class rtaa_ventilation_study:
+    
+    def __init__(self,ifcfilename):
+        setting=ifcopenshell.geom.settings()
+        setting.set(setting.USE_PYTHON_OPENCASCADE, True)
+        self._ifc_file= ifcopenshell.open(filename)
+        
+        self._space_elements=dict()
+        self._opening_elements=dict()
+        
+        print(" ifc file ",self._ifc_file)
+        
+        self._proj_loc=project_location()
+        self._proj_loc.set_location_from_ifc(self._ifc_file)
+        self._proj_loc.set_northing_from_ifc(self._ifc_file)
+
+    def _add_elements(self,ids=[],ltypes=[],container=None):
+        if((len(ids)==0) & (len(ltypes)==0)):
+            print(" Error : provides ids or classes to set elements of interest")
+            return
+        if container is None:
+            print(" Error : provide a container")
+            
+        element_set=set()
+        for id in ids:
+            element_set.add(self._ifc_file.by_id(id))
+        
+        for t in ltypes:
+            [element_set.add(el) for el in self._ifc_file.by_type(t)]
+          
+        
+        if container=="spaces":
+            self._space_elements={el.id():el for el in element_set}
+            
+        elif container=="openings":
+            self._opening_elements={el.id():el for el in element_set}
+        
+    
+    
+    def _remove_elements_by_ids(self,ids=[],container=None):
+        if(len(ids)==0):
+            print(" Error : provides ids or classes to set elements of interest")
+            return
+        if container is None:
+            print(" Error : provide a container")
+            
+                    
+        if container=="spaces":
+            for id in ids:
+                self._space_elements.pop(id)
+        elif container=="openings":
+            for id in ids:
+                self._opening_elements.pop(id)
+    
+    
+    def add_space_elements(self,ids=[],types=[]):
+        self._add_elements(ids,types,'spaces')
+        print(" Number of elements for solar analysis: ",len(self._space_elements.keys()))
+    
+    def remove_spaces_elements(self,ids=[]):
+        self._remove_elements(ids,types,'spaces')
+        
+    
+    
+    
+        
+    def add_opening_elements(self,ids=[],types=[]):
+        self._add_elements(ids,types,'openings')
+        print(" Number of elements in building: ",len(self._opening_elements.keys()))
+    
+    def remove_openings_elements(self,ids=[]):
+        self._remove_elements(ids,types,'openings')    
+                
+
+    def set_geometries(self):
+        
+        op_ids=set(self._opening_elements.keys())
+        # for opening of interest only 
+        # a subset of wall geometry and windows
+        self._window_by_wall={}
+        self._wall_shapes={}
+        self._window_shapes={}
+        
+        ifcwalls= ifc_file.by_type('IfcWall')
+        
+        for w in ifcwalls:
+            l_op=window_in_wall(w)
+            op_in_wall= set(l_op)
+            if len(op_in_wall.intersection(op_ids))>0:
+                self._window_by_wall[w.id()]=l_op
+                self._wall_shapes[w.id()]=ifcelement_as_solid(w)
+                for op in l_op:
+                    opening=ifc_file.by_id(op)
+                    self._window_shapes[opening.id()]=ifcelement_as_solid(opening)
+    
+    def display(self):
+        
+        
+        def rgb_color(r, g, b):
+            return Quantity_Color(r, g, b, Quantity_TOC_RGB)
+    
+        x=50/256
+        gray=rgb_color(x, x, x)
+    
+        display, start_display, add_menu, add_function_to_menu = init_display()
+        
+        ifcspaces=[self._ifc_file.by_id(id) for id in self._space_elements]
+        spaceshapes=[ ifcelement_as_solid(s) for s in ifcspaces]
+        
+        [display.DisplayShape(s,color=gray,transparency=0.5)for s in spaceshapes]
+        
+        
+        gpp=GProp_GProps()
+        
+        for svd in self._results:
+            
+            #print(svd._wall_faces)
+            for f in svd._wall_faces.values():
+                display.DisplayShape(f,color='RED',transparency=0.1)
+                
+            for f in svd._win_faces.values():
+                display.DisplayShape(f,color='GREEN',transparency=0.1)    
+                
+        
+        display.FitAll()
+        
+        start_display()
+        
+    
+    
+    def run(self):
+        self._results=[]
+        for ifcspaceid in self._space_elements:
+            ifcspace = self._ifc_file.by_id(ifcspaceid)
+            svd=space_ventilation_data(ifcspace)
+            svd.extract_faces(ifcspace,
+                            self._window_by_wall,
+                            self._wall_shapes,
+                            self._window_shapes)
+            print("\n\n")
+            svd.info()
+            svd.sweeping(self._window_shapes)
+            svd.opening_ratio()
+            self._results.append(svd)
+        
+       
+            
+
+class space_ventilation_data:
+    def __init__(self,ifcspace):
+        self._space=ifcspace
+        self._win_by_wall=defaultdict(list)
+        self._wall_faces =defaultdict(list)
+        self._win_faces  =defaultdict(list)
+
+    
+    def extract_faces(self,ifcspace,window_by_wall,wall_shapes,windows_shapes):
+        if ifcspace.Representation is not None:
+            ss =create_shape(setting, ifcspace).geometry
+        else :
+            print(" No geometry for ifcspace : ",ifcspace)
+            return
+        
+        
+        shu=ShapeUpgrade_UnifySameDomain(ss)
+        shu.Build()
+        ss=shu.Shape()
+        
+        origin = gp_Pnt(0.0,0.0,0.0)
+        Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
+        
+        faces=list(TopologyExplorer(ss).faces())
+        for f in faces:
+            soil_face=False
+            srf = BRep_Tool().Surface(f)
+            plane = Geom_Plane.DownCast(srf)
+            face_norm = plane.Axis().Direction()
+            if(f.Orientation()==1):
+                face_norm.Reverse()
+            ext_vec=gp_Vec(face_norm)*.1
+            #print('extrusion ',ext_vec.Coord())
+            
+            # skipping horizontal face but referencing the soil one
+            if( face_norm.Dot(Zaxis.Direction())<(-1+1e-5)):
+                self._soil_face=f
+                continue
             
             
+            extrusion = BRepPrimAPI_MakePrism(f,ext_vec,False,True).Shape()
+            #linter.append(extrusion)
+            #print('   ')
+            for wall_id,lwin in window_by_wall.items():
+                wall=wall_shapes[wall_id]
+                
+                intersection=BRepAlgoAPI_Common(extrusion,wall)
+                intersection_wall=intersection.Shape()
+                intersection_wall_solids=list(TopologyExplorer(intersection_wall).solids())
+                            
+                #the face of space catch a wall shape
+                if len(intersection_wall_solids)>0:
+                    # Searching if a window is hosted by the 
+                    # portion of wall catched by face extrusion                                         
+                    for win_id in lwin:
+                        #print('win_id ',win_id)
+                        win=windows_shapes[win_id]
+                        
+                        intersection=BRepAlgoAPI_Common(extrusion,win)
+                        intersection_win=intersection.Shape()
+                        intersection_win_solids=list(TopologyExplorer(intersection_win).solids())
+                        # the wall face catch a window
+                        # extracting datas from window
+                        if len(intersection_win_solids)>0:
+                            bigfaces=biggestface_along_vector(win,face_norm)
+                            #lbigface.extend(bigfaces)
+                            #lface.append(f)
+                            #faceswin[win_id].extend(bigfaces)
+                            self._win_by_wall[wall_id].append(win_id)
+                            self._wall_faces[wall_id].append(f)
+                            self._win_faces[win_id].extend(bigfaces)
+                            #svd.update(wall_id,win_id,f,bigfaces)
+    
+        
+    def opening_ratio(self):
+        if(len(self._win_by_wall.keys())==0):
+            print("No windows in this space")
+            return
+        #inverse mapping
+        wall_by_win={}
+        for wall_id,win_ids in self._win_by_wall.items():
+            for win_id in win_ids:
+                wall_by_win[win_id]=wall_id
+        
+        gpp=GProp_GProps()
+        
+        
+        wall_area=defaultdict(list)
+        wall_area_total=dict()
+        win_by_wall_area_total=dict()
+        for wall_id,f_list in self._wall_faces.items():
+            for f in f_list:
+                brepgprop_SurfaceProperties(f,gpp)
+                wall_area[wall_id].append(gpp.Mass())
+            wall_area_total[wall_id]=sum(wall_area[wall_id])
+        
+        win_area=defaultdict(list)
+        win_area_total=dict()
+        win_area_by_wall=defaultdict(float)
+        for win_id,f_list in self._win_faces.items():
+            for f in f_list: 
+                brepgprop_SurfaceProperties(f,gpp)
+                win_area[win_id].append(gpp.Mass())
+            win_area_total[win_id]= sum(win_area[win_id]) 
+            
+            win_area_by_wall[wall_by_win[win_id]]+=sum(win_area[win_id])
+            
+        # largest window area
+        print(win_area_total)
+        largest_opened_wall_id=max(win_area_by_wall)
+        #for k,v in self._win_by_wall.items():
+        #    if largest_windows_id in v:
+        #        wall_largest_window=k
+        
+        other_walls=list(self._win_by_wall.keys())
+        other_walls.remove(largest_opened_wall_id)
+        other_windows_area=list()
+        for wall_id in other_walls:
+            for win_id in self._win_by_wall[wall_id]:
+                # aera of the window / area of the hosting wall
+                ratio = win_area_total[win_id]/wall_area_total[ wall_by_win[win_id]]
+                #print( win_id,' ',ratio)
+                if ratio >0.1:
+                    other_windows_area.append(win_area_total[win_id])
+        result={}
+        result['A1']= wall_area_total[largest_opened_wall_id]
+        result['A2']= win_area_by_wall[largest_opened_wall_id]
+        result['A3s']= other_windows_area
+        print(result)
+        print(' opening ratio ', (result['A2']+sum(result['A3s']))/result['A1'])
+        """
+        opening_ratio=(win_area_total[largest_windows_id]+other_windows_area)/wall_area_total[wall_largest_window]
+        print(" wall area of the largest window",wall_largest_window," ",wall_area_total[wall_largest_window])
+        print(" largest window area",win_area_total[largest_windows_id])
+        print(" sum of others window area ", other_windows_area)
+        print(" opening ratio (no porosity) ",opening_ratio)
+        """
+        
+        porosity=1.0
+    
+    def sweeping(self,windows_shapes):
+        # compute and analyze intersection face and curve linking two windows
+        
+        if( len(self._win_by_wall.keys())==0):
+            print("No window in this space")
+            return
+        
+        if( len(self._win_by_wall.keys())==1):
+            print("All windows hosted by the same wall , no need to compute sweeping")
+            return
+        
+        # preprocessing of the soil surface
+        gpp=GProp_GProps()
+        srf = BRep_Tool().Surface(self._soil_face)
+        plane = Geom_Plane.DownCast(srf)
+                    
+        # convert edges to lines with min max value of paramter
+        edges=list(TopologyExplorer(self._soil_face).edges())
+        llines_face=[]
+        for e in edges:
+            (curve,minu,maxu)=BRep_Tool.Curve(e)
+            adapt=GeomAdaptor_Curve(curve)
+            llines_face.append( (projlib_Project(plane.Pln(),adapt.Line()),minu,maxu))
+        
+        # convert vertices to points            
+        vertices=list(TopologyExplorer(self._soil_face).vertices())
+        soil_pt=[BRep_Tool.Pnt(v) for v in vertices]
+        
+        # computation of an approximated diagonal
+        brepgprop_SurfaceProperties(self._soil_face,gpp)
+        mc_soil=gpp.CentreOfMass()
+        #distance from the mass center is already a proxy for half diag
+        half_diag = sum([mc_soil.Distance(p) for p in soil_pt])/len(soil_pt)
+        
+        print('Demie diagonale ', half_diag)
+        
+        # mass center of each windows for this room
+        mass_centers={}
+        for wall_id,win_ids in self._win_by_wall.items():
+            srf_wall=BRep_Tool().Surface(self._wall_faces[wall_id][0])
+            
+            for win_id in win_ids:
+                brepgprop_VolumeProperties(windows_shapes[win_id],gpp)
+                mc=gpp.CentreOfMass()
+                proj=GeomAPI_ProjectPointOnSurf(gpp.CentreOfMass(),srf_wall)
+                mass_centers[win_id]=proj.Point(1)
+        
+        length_between_mc={}
+        for win_id1,win_id2 in combinations(mass_centers.keys(),2):
+            mc1=mass_centers[win_id1]
+            mc2=mass_centers[win_id2]
+            print(" Distance between ",win_id1,' ',win_id2)
+        #for i,mc1 in enumerate(mass_centers[:-1]):
+        #    for mc2 in mass_centers[i+1::]:
+                #print(" new line ")
+                #print( mc.Coord(),' ',mc2.Coord())
+                
+            #line2d between the two mass centers
+            mc12d = projlib_Project(plane.Pln(),mc1)
+            mc22d = projlib_Project(plane.Pln(),mc2)
+            between_vec = gp_Vec2d(mc22d,mc12d).Normalized()
+            lin2d=gp_Lin2d( mc12d, gp_Dir2d(between_vec))
+            
+            # intersection between the line and the soil_face edges (as line)                    
+            lin2d_values=[]
+            for l,minu,maxu in llines_face:
+                inter=Geom2dAPI_InterCurveCurve(Geom2d_Line(l),Geom2d_Line(lin2d),1e-5)
+                #print(" number of intersections ",inter.NbPoints())
+                if inter.NbPoints()>0:
+                    uvalue=elclib_Parameter(l,inter.Point(1))
+                    if( (uvalue>=minu) & (uvalue<=maxu)):
+                        uvalue2=elclib_Parameter(lin2d,inter.Point(1))
+                        lin2d_values.append(uvalue2)
+                #else :
+                    # rare case of line joining two window parallel to another wall
+                    
+                
+                
+                # take only the intersection inside the surface
+
+            
+            # more intersection than just the two window mc
+            intersection_points=[]
+            if len(lin2d_values)>2:
+                #print(lin2d_values)
+                                        
+                lmax= elclib_Parameter(lin2d,mc12d)
+                lmin= elclib_Parameter(lin2d,mc22d)
+                #print(lmin,' ',lmax)
+                
+                #values_inter=[ v for v in lin2d_values if (v>lmax) | (v<lmin)]
+                
+                for v in lin2d_values:
+                    #print(v) 
+                    pt2d= elclib_Value(v,lin2d)
+                    
+                    # lower bound of the line                            
+                    if (pt2d.IsEqual(mc12d,1e-5)) :
+                        continue
+                    # higher bound of the line    
+                    if (pt2d.IsEqual(mc22d,1e-5)):
+                        continue
+                    
+                    if( (v >= lmax) | (v<=lmin)):
+                        continue
+                    #print("good v ") 
+                    pt3d= elclib_To3d(plane.Pln().Position().Ax2(),pt2d)
+                    intersection_points.append(pt3d)
+                    
+        
+            # Only one intersection mean that the ray do not get back inside
+            if len(intersection_points)==1:
+                continue
+            
+                            
+            #no problem if no intersection 
+            to_keep_idx=set()
+            for p in intersection_points:
+                d=[v.Distance(p) for v in soil_pt]
+                to_keep_idx.add( d.index(min(d)))
+            to_keep=[soil_pt[i] for i in to_keep_idx]    
+            
+            path=[mc1]+to_keep+[mc2]
+            length=0.0
+            for p1,p2 in pairwise(path):
+                length+=p1.Distance(p2)
+                print('lenth ',length ,' divided (must be >1) ', length/(half_diag))
+                length_between_mc[(win_id1,win_id2)]=length
+                    
+        return length_between_mc
+    
+      
+    def info(self):
+        print('Space Name ',self._space.Name)
+        print('Space Id   ',self._space.id())
+        print('*** Windows id by wall id of this space')
+        for wall_id,win_list in self._win_by_wall.items():
+            print("     wall id ",wall_id)
+            for w in win_list:
+                print("         win id ",w)
+        print('*** Space face by wall id in this space')
+        for wall_id,face_list in self._wall_faces.items():
+            print("     wall id ",wall_id)
+            for w in face_list:
+                print("         face ",w)
+        print('*** Largest faces of window in this space')
+        for wall_id,face_list in self._win_faces.items():
+            print("     wall id ",wall_id)
+            for w in face_list:
+                print("         face ",w)
+        print('\n')            
      
 
 if __name__ == "__main__":
@@ -1519,10 +2023,33 @@ if __name__ == "__main__":
     #ifc_file= ifcopenshell.open('data/simple_reunion_northaligned.ifc')
     #ifc_file= ifcopenshell.open('data/Rtaa_validation_run.ifc')
 
+
+    filename='C:/Users/cvoivret/source/canopia_ifcocc/data/DCE_CDV_BAT.ifc'
     
-    
+    #filename = 'data/villa.ifc'
 
     ifc_file= ifcopenshell.open(filename)
+    
+    rsv=rtaa_ventilation_study(filename)
+    rsv.add_space_elements([],['IfcSpace'])
+    rsv.add_opening_elements([],['IfcWindow','IfcDoor'])
+    rsv.set_geometries()
+    rsv.run()
+    rsv.display()
+    
+    """
+    rss=rtaa_solar_study(filename)
+    rss.add_building_elements([],['IfcWall','IfcSlab'])
+    rss.add_solar_elements([],['IfcWindow','IfcDoor'])
+    rss.set_geometries()
+    rss.display(True,True)
+    """
+    
+    
+    
+    """
+    
+    
     
     tag2ratio={}
     if filename == 'data/Rtaa_validation_run.ifc':
@@ -1561,15 +2088,17 @@ if __name__ == "__main__":
         
     res=[]
     
-    totake=orientations_name#['NORD']
+    totake=['NORD']
     list_conf= [ config[n] for n in totake]
     
     x=np.arange(0.15,1.15,.1)
     cm_orientation=[]   
     for angle in list_conf:
         rss._proj_loc.update_northing_from_angle(angle)
+        #rss.display(True)
         rss.run()
         cm_orientation.append(rss.cm())
+    
         
     rtaa_data= pd.read_excel('data/h85_l50_ec15_joues.xlsx')
         
@@ -1586,190 +2115,14 @@ if __name__ == "__main__":
     plt.show()
     
     
-    
-    cdscd
-    
-        
-    # partial building to compute external shell and exterior wall
-    wall_shapes  = [create_shape(setting, x).geometry for x in ifcwalls if x.Representation is not None]
-    space_shapes = [create_shape(setting, x).geometry for x in ifcspaces if x.Representation is not None]
-    core_shapes  = wall_shapes+space_shapes
-    core_solids  = shapes_as_solids(core_shapes)
-        
-    # complete building to compute shadow on
-    ifcextension= []+ifcslabs+ifcproxys
-    extension_shapes = [create_shape(setting, x).geometry for x in ifcextension if x.Representation is not None]
-    extension_solids =  shapes_as_solids(extension_shapes)
-
-    building_shapes= core_shapes + extension_shapes
-    building_solids= core_solids + extension_solids
-    exposed_building = fuse_listOfShape(building_solids)
-    exposed_building = shapes_as_solids([exposed_building])[0]
-    
-    external_shell= get_external_shell(core_solids)
-    
-           
+   """
     
     
     
     
     
+    """ 
     
-    
-    # rtaa_solar_on_elements(ifcfile)
-    # set element of intereset( list of ID or elementclass)
-    #   can put window or doors or wall (maybe)
-    # set element of building( list ID or list of class)
-    #
-    # populate the necessayr geometry data structure
-    #   be generic in terms of name (window/door/wall)
-    
-    # run the loop over each element
-    #   check for data precense
-    #   element are reduced to faces that we apply the method on
-    
-    # return a list of cm for each element
-    
-    
-    # do the same for ventilation !
-    
-    
-    
-    # # data caching
-    # wall shapes ([] or [idlist]) : dict(id,shape)
-    # window shapes( [] or [idlist]) : dict(id,shape)
-    
-    # # data linking
-    # exterior wall[wall_id]=(normal,plane)
-    # window in wall(wallid)
-    # 
-    
-    # # prep data for few elements
-    # preprocess( list window id)
-    #     from the list, get the hosting wall normal 
-    #     populate the necessayr geometry data structure
-    
-    
-    
-    
-    
-    
-    windows_by_wall_id = dict()
-    for wall in ifcwalls:
-        windows_by_wall_id[wall.id()] = window_in_wall(wall)
-
-    # will only contain wall id that considered as exterior wall of the building
-    # if id is not in the keys, the wall could be considered as interior
-    normal_by_exterior_wall_id = dict()
-    plane_by_exterior_wall_id=dict()
-    for (w_id,ws) in zip(windows_by_wall_id.keys(),wall_shapes):
-        wall_norm,plane_ext=exterior_wall_normal_and_plane(ws,external_shell)
-        normal_by_exterior_wall_id[w_id]=wall_norm
-        plane_by_exterior_wall_id[w_id]=plane_ext
-    
-    
-    glassface_bywindowid=defaultdict(list)
-    glassface_extplane=dict()
-    for w_id in windows_by_wall_id.keys():
-        if (w_id in normal_by_exterior_wall_id.keys()):
-            wall_norm=normal_by_exterior_wall_id[w_id]
-        else:
-            # window in interior wall
-            continue
-            
-        for win_id in windows_by_wall_id[w_id]:
-        
-            windowshape=create_shape(setting, ifc_file.by_guid(win_id)).geometry
-            gfaces=biggestface_along_vector(windowshape,wall_norm)
-            glassface_bywindowid[win_id].extend(gfaces)
-            glassface_extplane[win_id]=plane_by_exterior_wall_id[w_id]
-        
-
-        
-    tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
-    
-    orientations_name=['NORD','EST','SUD','OUEST']
-    #time_mask = [north_mask,eso_mask,eso_mask,eso_mask]
-    
-    config={name:(angle) for name,angle in zip(orientations_name,tn_angle)}
-        
-    #tn_angle=[0.0]
-    proj_loc=project_location()
-    proj_loc.set_location_from_ifc(ifc_file)
-    proj_loc.load_irradiance()
-  
-    
-    res=[]
-    
-    totake=orientations_name#['NORD']
-    list_conf= [ config[n] for n in totake]
-        
-    
-    x=np.arange(0.15,1.15,.1)
-    
-    cm_orientation=[]
-    for tn in list_conf:
-        cm_id=[]
-        for (k,win_id) in enumerate(glassface_bywindowid.keys()):
-            
-            lglassfaces=glassface_bywindowid[win_id]
-            print(' window id ', win_id)
-            if win_id!=833:
-                continue
-            
-            proj_loc.update_northing_from_angle(tn)
-            sun_to_earth_project,irradiance=proj_loc.data_critical_period_day(lglassfaces[0])
-                        
-            rtaa=rtaa_on_faces(lglassfaces,glassface_extplane[win_id],exposed_building,sun_to_earth_project)
-            rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm=x[k])
-            
-            rtaa.compute_masks()
-            rtaa.compute_cm(irradiance)
-            #ldiff.append(rtaa._Fdiff)
-            #lsky.append(rtaa._ldiffuse[0]._wm)
-            
-            
-            cm_id.append(rtaa._cm)
-            
-        cm_orientation.append(cm_id)
-    
-    
-    rtaa_data= pd.read_excel('data/h85_l50_ec15_joues.xlsx')
-    """
-    rtaa_joue=[.77,.61,.51,.44,.40,.37,.36,.35,.34,.33]
-    plt.plot(x,cm_orientation[0],label='computed')
-    plt.plot(x,rtaa_joue,label='rtaa')
-    plt.legend()
-    plt.show()
-    """
-    """
-    t=sample['time']
-    plt.plot(t,rtaa._LFdir,'-',label='rtaa')
-    plt.plot(t,rtaa._ldirect[0]._mask_ratio,'-',label='computed')
-    plt.plot(t,rtaa._ldf_irr[0]['flux'].values,'-',label='flux')
-    #plt.plot(t,nface,'-',label='nfaces')
-    plt.legend()
-    plt.show()
-    """
-    
-    
-    
-    #rtaa_hang=[rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm) for dhm in x]
-    
-    colors=['r','g','b','k']
-    marks=['x','d','o']
-    #for cmo,m in zip(cm_orientation,marks):
-    for data,name,c in zip(cm_orientation,totake,colors):
-        plt.plot(x,data,'-',color=c,marker='o',lw=2,label=name+'_computed')
-    
-    for name,c in zip(totake,colors):
-        plt.plot(x,rtaa_data[name],'--',color=c,lw=2,label=name+'_ref')
-    
-    plt.legend()
-    plt.show()
-    
-    
-    """
     def rgb_color(r, g, b):
         return Quantity_Color(r, g, b, Quantity_TOC_RGB)
     
