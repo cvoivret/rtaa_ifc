@@ -593,10 +593,10 @@ def exterior_wall_normal_and_plane(wall_shape,external_shell):
     common.Perform()
     commonshell2=common.Shape() 
     
-    print(commonshell2)
+    #print(commonshell2)
     
     faces=list(TopologyExplorer(commonshell2).faces())
-    print(len(faces))
+    #print(len(faces))
     # exteriro wall !!
     if len(faces)>0:
         
@@ -614,7 +614,7 @@ def exterior_wall_normal_and_plane(wall_shape,external_shell):
             brepgprop_SurfaceProperties(f,gpp)
             norm_area[face_norm_coord]+=gpp.Mass()
             norm_map[face_norm_coord].append(f)
-        print(norm_map)
+        #print(norm_map)
         wall_norm = max(norm_area, key=norm_area.get)   
                 
         #print(norm_area)
@@ -650,7 +650,7 @@ def exterior_wall_normal_dict(wallwindow,external_shell):
 def biggestface_along_vector(shape,vector,tol=1e-6,ratio=0.9):
     gpp=GProp_GProps()
     faces=list(TopologyExplorer(shape).faces())
-    print(" nb face par fenetre ", len(faces))
+    #print(" nb face par fenetre ", len(faces))
     facelist=[]
     facearea=[]
     #facenormal=[]
@@ -683,25 +683,25 @@ def biggestface_along_vector(shape,vector,tol=1e-6,ratio=0.9):
     totalarea=sum(facearea)
     
     count=Counter(facearea)
-    area_by_count={area: c*area for area,c in count.items()}
+    #area_by_count={area: c*area for area,c in count.items()}
     area_by_count2={area: c*area/totalarea for area,c in count.items()}
     
     significative_area = [area for area,v in area_by_count2.items() if v >.2]
     gfaces = [f for a,f in zip(facearea,facelist) if a in significative_area]
-    
+    """
     print(count)
     print(area_by_count)
     print(area_by_count2)
     print(significative_area)
     print([a for a in facearea if a in significative_area])
-    
+    """
     # une grande face 
     
      
     
-    maxarea=max(facearea)
-    facearea.sort()
-    print(" face area sorted ",facearea)
+    #maxarea=max(facearea)
+    #facearea.sort()
+    #print(" face area sorted ",facearea)
     #gfaces=[ face for area,face in zip(facearea,facelist) if 
     #           area>maxarea*ratio]
     return gfaces
@@ -725,25 +725,19 @@ def biggestfaces_along_normaldict(wallwindow,wallnormal):
             
     return glassface_bywindowid
  
-def window_in_wall(ifcwall):
-    windows=[]
+def opening_in_wall(ifcwall,take_window=True,take_doors=True):
+    opening_filler=[]
+    #print('\n ***',ifcwall)
     for op in ifcwall.HasOpenings:
-            #print('\n ***',w)
-            #print('  ',op)
-            for re in op.RelatedOpeningElement.HasFillings:
-                #print('Related ', re.RelatedBuildingElement)
-                if(re.RelatedBuildingElement.is_a()=='IfcWindow'):
-                    windows.append(re.RelatedBuildingElement.id())
-    return windows
+        #print('   opening : ',op)
+        for re in op.RelatedOpeningElement.HasFillings:
+            #print(' Filling ', re.RelatedBuildingElement.is_a())
+            if(take_window & (re.RelatedBuildingElement.is_a()=='IfcWindow')):
+                opening_filler.append(re.RelatedBuildingElement.id())
+            elif (take_doors & (re.RelatedBuildingElement.is_a()=='IfcDoor')):
+                opening_filler.append(re.RelatedBuildingElement.id())
+    return opening_filler
 
-def link_wall_window(ifcwalls):
-    #link window and walls in plain python
-    wallwindow=defaultdict(list)
-    
-    for wall in ifcwalls:
-        wallwindow[wall.id()] = window_in_wall(wall)
-        
-    return wallwindow
 
 class diffuse_mask_on_face:
     def __init__(self,face):
@@ -924,12 +918,14 @@ class direct_mask_on_face:
 # the list of faces correspond to a window
 class rtaa_on_faces:
     
-    def __init__(self,lfaces,wall_plane,exposed_building,l_sun_dir):
+    def __init__(self,lfaces,wall_plane,exposed_building,l_sun_dir,cut=True,adjust=True):
         self._lfaces=lfaces
         self._wall_plane=wall_plane
         #self._original_lfaces=[f for f in lfaces]
         self._exposed_building=exposed_building
         self._lsun_dir=l_sun_dir
+        self._cut = cut
+        self._adjust = adjust
         
     
     
@@ -945,7 +941,7 @@ class rtaa_on_faces:
         if(face.Orientation()==1):
             face_norm.Reverse()
         
-        pln=plane.Pln().Translated( gp_Vec(face_norm)*(-.01))    
+        pln=plane.Pln().Translated( gp_Vec(face_norm)*(-1))    
         newface= BRepBuilderAPI_MakeFace(plane.Pln(),-cut_size,cut_size,-cut_size,cut_size).Face()
         extrusion = BRepPrimAPI_MakePrism(newface,gp_Vec(face_norm)*10.,False,False).Shape()
         
@@ -984,16 +980,29 @@ class rtaa_on_faces:
         
         self._ldirect=[]
         self._ldiffuse=[]
+        
+        self._lcuted=[]
+        self._ladjusted=[]
+        
         for f in self._lfaces:
          #rtaa_on_faces(exposed_building,sun_to_earth_project)
-            cutted_building = self.cut_exposed_building(1.,f)
-            adjusted_face = self.adjust_face_to_wall_plane(f)   
+            if self._cut :
+                cutted_building = self.cut_exposed_building(1.,f)
+            else :
+                cutted_building = self._exposed_building
+             
+            if self._adjust :
+                adjusted_face = self.adjust_face_to_wall_plane(f)
+            else:
+                adjusted_face = f
+                
             print('direct mask')
             direct_mask = direct_mask_on_face(adjusted_face,self._lsun_dir)
             direct_mask.compute_mask(cutted_building,1e-3)
             direct_mask.shadow_areas()
             direct_mask.face_area()
             direct_mask.mask_ratio()
+            #direct_mask.display(cutted_building)
             print('\n')
             
             print('diffuse mask ')
@@ -1004,6 +1013,43 @@ class rtaa_on_faces:
             
             self._ldirect.append(direct_mask)
             self._ldiffuse.append(diffuse_mask)
+            
+            self._lcuted.append(cutted_building)
+            self._ladjusted.append(adjusted_face)
+    
+    def display(self):
+        
+        
+        def rgb_color(r, g, b):
+            return Quantity_Color(r, g, b, Quantity_TOC_RGB)
+    
+        x=50/256
+        gray=rgb_color(x, x, x)
+    
+        display, start_display, add_menu, add_function_to_menu = init_display()
+        display.DisplayShape(self._exposed_building,color='GREEN',transparency=0.5)
+        
+        [ display.DisplayShape(b,color=gray,transparency=0.5) for b in self._lcuted]
+        gpp=GProp_GProps()
+        for f in self._ladjusted:
+            display.DisplayShape(f,color='RED',transparency=0.5)
+            
+            srf = BRep_Tool().Surface(f)
+            plane = Geom_Plane.DownCast(srf)
+            face_norm = plane.Axis().Direction()
+            if(f.Orientation()==1):
+                face_norm.Reverse()
+            norm=gp_Vec(face_norm)
+            brepgprop_SurfaceProperties(f,gpp)
+            mc=gpp.CentreOfMass()
+            display.DisplayVector(norm,mc)
+        
+        
+        display.FitAll()
+        
+        start_display()
+     
+    
     
     def compute_masks_hangover(self,hp,lp,dhp,dhm,pcd=0.0,pcg=0.0):
         # direct irradiance
@@ -1222,6 +1268,8 @@ class project_location:
         print("latitude : ",self._latitude)
         print("longitude: ",self._longitude)
         
+        self._region = 'reunion'
+        
         ## datetime to compute shadow
         tf=tf = TimezoneFinder()
         self._tz = tf.timezone_at(lng=self._longitude, lat=self._latitude) 
@@ -1231,23 +1279,47 @@ class project_location:
         # set region based on latitude longitude of the project
         pass
         
-    def set_rtaa_region(self,region_name):
+    def set_rtaa_region(self,region_name='reunion'):
         # test against a list of name
+        pass
+    
+    def get_critical_period_mask(self):
         pass
     
     def load_irradiance(self):
         # depend on the location 
         meteo=pd.read_excel('data/meteo_rtaa.xlsx')
-        self._dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
-        self._irradiance=meteo.assign(time=self._dt_index.values)
-            
-    def irr_sunpos(self):
-        vectors, zen_vec, az_vec = self.sun_vectors(self._dt_index)
+        
+        #self._dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
+        dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
+
+        self._irradiance=meteo.assign(time=dt_index.values)
+        
+        
+        """
+        self._critical_period_mask={}
+        self._critical_period_mask['reunion']={
+        'north':(self._dt_index.strftime("%m-%d")<='04-30')*(self._dt_index.strftime("%m-%d")>='02-01'),
+        'ew':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01'),
+        'south':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01')
+        }
+        self._critical_period_mask['guyane']={
+        'north':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
+        'ew':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
+        'south':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='08-01')
+        }
+        """
+    """        
+    def sunpos(self,dt_index):
+        print(self._irradiance)
+        vectors, zen_vec, az_vec = self.sun_vectors(dt_index)
+        irradiance=self._irradiance[dt_index]
+        print(self._dt_index)
         self._irradiance['zenith']=zen_vec
         self._irradiance['azimuth']=az_vec
         
         return vectors, self._irradiance
-                
+    """           
     
     def face_orientation_angle_tn(self,face):
         srf = BRep_Tool().Surface(face)
@@ -1266,20 +1338,7 @@ class project_location:
         #print(" angle_tn ",to_tn)
         return to_tn
     
-    def data_critical_period(self,face):
-        
-        critical_period_mask={}
-        critical_period_mask['reunion']={
-        'north':(self._dt_index.strftime("%m-%d")<='04-30')*(self._dt_index.strftime("%m-%d")>='02-01'),
-        'ew':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01'),
-        'south':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01')
-        }
-        critical_period_mask['guyane']={
-        'north':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
-        'ew':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
-        'south':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='08-01')
-        }
-        
+    def mask_critical_period(self,face):
         
         # as a function of region return the correct list of sun_position
         # compute face normal and determine the time mask
@@ -1295,25 +1354,111 @@ class project_location:
             
             
         print(' orientation mask ',orientation )
+        t=self._irradiance.time.dt
         
+        #print(t)
+        if self._region == 'reunion':
+            if orientation == 'north':
+                return (t.strftime("%m-%d")<='04-30')*(t.strftime("%m-%d")>='02-01')
+            elif orientation == 'ew':
+                return (t.strftime("%m-%d")<='02-28')*(t.strftime("%m-%d")>='01-01')
+            elif orientation == 'south' :
+                return (t.strftime("%m-%d")<='02-28')*(t.strftime("%m-%d")>='01-01')
+        else :
+            print("NOT implemented ")
+            return
+        """
+        self._critical_period_mask={}
+        self._critical_period_mask['reunion']={
+        'north':(self._dt_index.strftime("%m-%d")<='04-30')*(self._dt_index.strftime("%m-%d")>='02-01'),
+        'ew':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01'),
+        'south':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01')
+        }
+        self._critical_period_mask['guyane']={
+        'north':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
+        'ew':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
+        'south':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='08-01')
+        }
+                
+        return self._critical_period_mask['reunion'][orientation]
+        """
         
-            
+        """
         # secteur angulaire
-        mask=critical_period_mask['reunion'][orientation]
+        mask=self._critical_period_mask['reunion'][orientation]
         # filtering
         v,_=self.irr_sunpos()
         mask_v = list(np.argwhere(mask).flatten())
         #print(v)
         return list(compress(v,mask_v)),self._irradiance[mask]
+        """
      
     def data_critical_period_day(self,face):
+    
+        
+        mask = self.mask_critical_period(face)
+        """
+        dt_index=pd.DatetimeIndex(self._irradiance.time)
+        lvec,zen_vec,az_vec= self.sun_vectors(dt_index)
+        self._irradiance['az']=az_vec
+        self._irradiance['zen']=zen_vec
+        
+        for v,z in zip(lvec,zen_vec):
+            print(v.Coord(),' ',90-z)
+        daytime = (90.-zen_vec)>=0.0
+        """
+        
+        
+        
+        #dt = self._irradiance[mask]
+        irr_crit = self._irradiance[mask].copy()
+        
+        #print(self._irradiance)
+        #print(irr_crit)
+        dt_index=pd.DatetimeIndex(irr_crit.time)
+        lvec,zen_vec,az_vec= self.sun_vectors(dt_index)
+        
+        irr_crit["az"]=az_vec
+        irr_crit["zen"]=zen_vec
+        
+        lvec_day=[]
+        for v,z in zip(lvec,zen_vec):
+            
+            if 90-z>0.0:
+                #print(v.Coord(),' ',90-z)
+                lvec_day.append(v)
+        
+        daytime = (90.-zen_vec)>=0.0
+        irr_crit_day=irr_crit[daytime]
+        #print(irr_crit_day)
+        """
+        # filtering vectors of sun direction
+        #mask_v = list(np.argwhere(daytime).flatten())
+        print( 'daytime shape ',daytime.shape)
+        print(' len mask v ',len(mask_v))
+        #lvec_day=list(compress(lvec,mask_v))
+        print( 'lvecday  shape ',len(lvec_day))
+        print(' zen vec day ',zen_vec[daytime].shape)
+        
+        for v,z in zip(lvec_day):
+            print(v.Coord(),' ',90-z)
+        # filtering irradiance
+        irr_crit_day=irr_crit[daytime]
+        
+        print(irr_crit_day)
+        """
+        #cdcs
+        return lvec_day,irr_crit_day
+        
+        """
         v,irradiance = self.data_critical_period(face)
-        #print(irradiance[:20])
+        print(" critical period date number ",irradiance.shape[0])
         daytime= (90.-irradiance['zenith'])>=0.0
+        print(" critical period daylight number ",irradiance[daytime].shape[0])
         #print(daytime[:20])
         mask_v = list(np.argwhere(daytime.values).flatten())
         return list(compress(v,mask_v)),irradiance[daytime]
-        
+        """
     
     def sun_vectors(self,dtindex):
         # compute the project sun position from a given time serie (local time, without TZ)
@@ -1446,7 +1591,7 @@ class rtaa_solar_study:
             elif((self._solar_elements[id].is_a('IfcWindow')) | 
                   (self._solar_elements[id].is_a('IfcDoors'))):
                 el = self._solar_elements[id]
-                citedby=list(ifc_file.get_inverse(el.FillsVoids[0].RelatingOpeningElement))
+                citedby=list(self._ifc_file.get_inverse(el.FillsVoids[0].RelatingOpeningElement))
                 for c in citedby:
                     if c.is_a('IfcRelVoidsElement'):
                         hosting_wall=c.RelatingBuildingElement
@@ -1455,11 +1600,11 @@ class rtaa_solar_study:
                 print("Error, solar element not wall window or door")
             self._hosting_solar_id[id]=hosting_wall_id
             
-            print(" wall norm plane ",hosting_wall_id," ",self._wall_norm_plane[hosting_wall_id])
+            #print(" wall norm plane ",hosting_wall_id," ",self._wall_norm_plane[hosting_wall_id])
             if(self._wall_norm_plane[hosting_wall_id]):
                 wall_norm,plane = self._wall_norm_plane[hosting_wall_id]
-                print(wall_norm.Coord())
-                print(id)
+                #print(wall_norm.Coord())
+                #print(id)
             
                 faces = biggestface_along_vector(shape,wall_norm)
                 if len(faces)>0:
@@ -1536,23 +1681,28 @@ class rtaa_solar_study:
         
         
     
-    def run(self):
+    def run(self,cut=True,adjust=True):
         
         
         self._results=dict()
         
         for id,facelist in self._solar_faces.items():
+            
+            #if id!=836:
+            #    continue
             idhost = self._hosting_solar_id[id] 
             norm,plane =self._wall_norm_plane[idhost]
             
             sun_to_earth_project,irradiance=self._proj_loc.data_critical_period_day(facelist[0])
-                       
-            rtaa=rtaa_on_faces(facelist,plane,self._building,sun_to_earth_project)
+            
+            print(" Opening ID  : ", id)
+            rtaa=rtaa_on_faces(facelist,plane,self._building,sun_to_earth_project,cut,adjust)
             #rtaa.compute_masks_hangover(hp=.85,lp=.5,dhp=.15,dhm=x[k])
             
             rtaa.compute_masks()
             rtaa.compute_cm(irradiance)
             self._results[id]=rtaa
+            #rtaa.display()
             
         
     def cm(self):
@@ -1567,7 +1717,7 @@ class rtaa_ventilation_study:
     def __init__(self,ifcfilename):
         setting=ifcopenshell.geom.settings()
         setting.set(setting.USE_PYTHON_OPENCASCADE, True)
-        self._ifc_file= ifcopenshell.open(filename)
+        self._ifc_file= ifcopenshell.open(ifcfilename)
         
         self._space_elements=dict()
         self._opening_elements=dict()
@@ -1645,16 +1795,18 @@ class rtaa_ventilation_study:
         self._wall_shapes={}
         self._window_shapes={}
         
-        ifcwalls= ifc_file.by_type('IfcWall')
+        ifcwalls= self._ifc_file.by_type('IfcWall')
         
         for w in ifcwalls:
-            l_op=window_in_wall(w)
+            l_op= opening_in_wall(w)
             op_in_wall= set(l_op)
             if len(op_in_wall.intersection(op_ids))>0:
+                
                 self._window_by_wall[w.id()]=l_op
                 self._wall_shapes[w.id()]=ifcelement_as_solid(w)
+                
                 for op in l_op:
-                    opening=ifc_file.by_id(op)
+                    opening=self._ifc_file.by_id(op)
                     self._window_shapes[opening.id()]=ifcelement_as_solid(opening)
     
     def display(self):
@@ -1665,14 +1817,14 @@ class rtaa_ventilation_study:
     
         x=50/256
         gray=rgb_color(x, x, x)
-    
+        orange=rgb_color(255/256,127/256,80/256)
         display, start_display, add_menu, add_function_to_menu = init_display()
         
         ifcspaces=[self._ifc_file.by_id(id) for id in self._space_elements]
         spaceshapes=[ ifcelement_as_solid(s) for s in ifcspaces]
         
-        [display.DisplayShape(s,color=gray,transparency=0.5)for s in spaceshapes]
-        
+        [display.DisplayShape(s,color=orange,transparency=0.1)for s in spaceshapes]
+        [display.DisplayShape(s,color=gray,transparency=0.8)for s in self._wall_shapes.values()]
         
         gpp=GProp_GProps()
         
@@ -1680,7 +1832,7 @@ class rtaa_ventilation_study:
             
             #print(svd._wall_faces)
             for f in svd._wall_faces.values():
-                display.DisplayShape(f,color='RED',transparency=0.1)
+                display.DisplayShape(f,color='BLUE',transparency=0.1)
                 
             for f in svd._win_faces.values():
                 display.DisplayShape(f,color='GREEN',transparency=0.1)    
@@ -1695,13 +1847,16 @@ class rtaa_ventilation_study:
     def run(self):
         self._results=[]
         for ifcspaceid in self._space_elements:
+            
             ifcspace = self._ifc_file.by_id(ifcspaceid)
             svd=space_ventilation_data(ifcspace)
+            #print("  Processing ",ifcspace)
+            
             svd.extract_faces(ifcspace,
                             self._window_by_wall,
                             self._wall_shapes,
                             self._window_shapes)
-            print("\n\n")
+            #print("\n\n")
             svd.info()
             svd.sweeping(self._window_shapes)
             svd.opening_ratio()
@@ -1786,7 +1941,7 @@ class space_ventilation_data:
         
     def opening_ratio(self):
         if(len(self._win_by_wall.keys())==0):
-            print("No windows in this space")
+            print("No opening in this space")
             return
         #inverse mapping
         wall_by_win={}
@@ -1809,6 +1964,7 @@ class space_ventilation_data:
         win_area=defaultdict(list)
         win_area_total=dict()
         win_area_by_wall=defaultdict(float)
+        
         for win_id,f_list in self._win_faces.items():
             for f in f_list: 
                 brepgprop_SurfaceProperties(f,gpp)
@@ -1818,11 +1974,17 @@ class space_ventilation_data:
             win_area_by_wall[wall_by_win[win_id]]+=sum(win_area[win_id])
             
         # largest window area
+        print('\n\n')
+        print('win area total')
         print(win_area_total)
-        largest_opened_wall_id=max(win_area_by_wall)
+        print(win_area_by_wall)
+        largest_opened_wall_id=max(win_area_by_wall,key=win_area_by_wall.get)
+        print(" largest opening is ",largest_opened_wall_id)
         #for k,v in self._win_by_wall.items():
         #    if largest_windows_id in v:
         #        wall_largest_window=k
+        
+        # print the details : Area of each opening, associated wall area
         
         other_walls=list(self._win_by_wall.keys())
         other_walls.remove(largest_opened_wall_id)
@@ -1838,8 +2000,9 @@ class space_ventilation_data:
         result['A1']= wall_area_total[largest_opened_wall_id]
         result['A2']= win_area_by_wall[largest_opened_wall_id]
         result['A3s']= other_windows_area
+        print(' Opening Analysis results ')
         print(result)
-        print(' opening ratio ', (result['A2']+sum(result['A3s']))/result['A1'])
+        print('     opening ratio ', (result['A2']+sum(result['A3s']))/result['A1'])
         """
         opening_ratio=(win_area_total[largest_windows_id]+other_windows_area)/wall_area_total[wall_largest_window]
         print(" wall area of the largest window",wall_largest_window," ",wall_area_total[wall_largest_window])
@@ -1884,7 +2047,7 @@ class space_ventilation_data:
         #distance from the mass center is already a proxy for half diag
         half_diag = sum([mc_soil.Distance(p) for p in soil_pt])/len(soil_pt)
         
-        print('Demie diagonale ', half_diag)
+        #print('Demie diagonale ', half_diag)
         
         # mass center of each windows for this room
         mass_centers={}
@@ -1901,7 +2064,7 @@ class space_ventilation_data:
         for win_id1,win_id2 in combinations(mass_centers.keys(),2):
             mc1=mass_centers[win_id1]
             mc2=mass_centers[win_id2]
-            print(" Distance between ",win_id1,' ',win_id2)
+            #print(" Distance between ",win_id1,' ',win_id2)
         #for i,mc1 in enumerate(mass_centers[:-1]):
         #    for mc2 in mass_centers[i+1::]:
                 #print(" new line ")
@@ -1976,9 +2139,13 @@ class space_ventilation_data:
             length=0.0
             for p1,p2 in pairwise(path):
                 length+=p1.Distance(p2)
-                print('lenth ',length ,' divided (must be >1) ', length/(half_diag))
-                length_between_mc[(win_id1,win_id2)]=length
-                    
+                #print('lenth ',length ,' divided (must be >1) ', length/(half_diag))
+                length_between_mc[(win_id1,win_id2)]=length/half_diag
+        
+        print(' Sweeping (must be >1) : ' )
+        for k,v in length_between_mc.items():
+            print('     ',k[0],' ',k[1],' ',v)
+        print(length_between_mc)
         return length_between_mc
     
       
@@ -2026,61 +2193,7 @@ if __name__ == "__main__":
 
     filename='C:/Users/cvoivret/source/canopia_ifcocc/data/DCE_CDV_BAT.ifc'
     
-    #filename = 'data/villa.ifc'
-
-    ifc_file= ifcopenshell.open(filename)
-    
-    rsv=rtaa_ventilation_study(filename)
-    rsv.add_space_elements([],['IfcSpace'])
-    rsv.add_opening_elements([],['IfcWindow','IfcDoor'])
-    rsv.set_geometries()
-    rsv.run()
-    rsv.display()
-    
     """
-    rss=rtaa_solar_study(filename)
-    rss.add_building_elements([],['IfcWall','IfcSlab'])
-    rss.add_solar_elements([],['IfcWindow','IfcDoor'])
-    rss.set_geometries()
-    rss.display(True,True)
-    """
-    
-    
-    
-    """
-    
-    
-    
-    tag2ratio={}
-    if filename == 'data/Rtaa_validation_run.ifc':
-        tag2ratio['257017']=0.1
-        tag2ratio['273402']=0.2
-        tag2ratio['273433']=0.3
-        tag2ratio['273468']=0.4
-        tag2ratio['273497']=0.5
-        tag2ratio['273528']=0.6
-        tag2ratio['273603']=0.7
-        tag2ratio['273636']=0.8
-        tag2ratio['273680']=0.9
-        tag2ratio['273718']=1.0
-        
-
-    ifcwalls=ifc_file.by_type('IfcWall')
-    ifcspaces=ifc_file.by_type('IfcSpace')
-    ifcwindows=ifc_file.by_type('IfcWindow')
-    ifcslabs=ifc_file.by_type('IfcSlab')
-    ifcproxys=ifc_file.by_type('IfcBuildingElementProxy')
-    
-    
-    rss=rtaa_solar_study(filename)
-    
-    rss.add_building_elements([],['IfcWall','IfcSlab'])
-    
-    rss.add_solar_elements([],['IfcWindow'])
-    
-    rss.set_geometries()
-    #rss.display()
-    
     tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
     orientations_name=['NORD','EST','SUD','OUEST']
     
@@ -2088,34 +2201,96 @@ if __name__ == "__main__":
         
     res=[]
     
-    totake=['NORD']
-    list_conf= [ config[n] for n in totake]
+    totake=orientations_name#['NORD']
+    list_angle= [ config[n] for n in totake]
     
     x=np.arange(0.15,1.15,.1)
-    cm_orientation=[]   
-    for angle in list_conf:
+    
+    filename = 'data/debords_casquettes_fins_triangle.ifc'
+    rss=rtaa_solar_study(filename)
+    rss.add_building_elements([],['IfcWall','IfcSlab'])
+    rss.add_solar_elements([],['IfcWindow','IfcDoor'])
+    rss.set_geometries()
+        
+    cm_orientation=defaultdict(list)   
+    for angle,orient in zip(list_angle,totake):
         rss._proj_loc.update_northing_from_angle(angle)
         #rss.display(True)
         rss.run()
-        cm_orientation.append(rss.cm())
+        cm_orientation[orient]=rss.cm()
     
+    res=pd.DataFrame(cm_orientation)
+    res=res.sort_values(by='NORD',ascending=False)
+    res.to_csv(filename[:-3]+'csv')
+    
+    """
+    
+    """
+    filename_list=['data/debords_casquettes_epais.ifc',
+                    'data/debords_casquettes_fins.ifc',
+                    'data/debords_epais.ifc',
+                    'data/debords_fins.ifc']
+                    
+                    
+                    
+    #filename = 'data/debords_casquettes_epais.ifc'
+    
+    for filename in filename_list:
+        rss=rtaa_solar_study(filename)
+        rss.add_building_elements([],['IfcWall','IfcSlab'])
+        rss.add_solar_elements([],['IfcWindow','IfcDoor'])
+        rss.set_geometries()
+            
+        cm_orientation=defaultdict(list)   
+        for angle,orient in zip(list_angle,totake):
+            rss._proj_loc.update_northing_from_angle(angle)
+            #rss.display(True)
+            rss.run()
+            cm_orientation[orient]=rss.cm()
         
-    rtaa_data= pd.read_excel('data/h85_l50_ec15_joues.xlsx')
+        res=pd.DataFrame(cm_orientation)
+        res=res.sort_values(by='NORD',ascending=False)
+        res.to_csv(filename[:-3]+'csv')
+    
+    rtaa_data= pd.read_excel('data/debords_casquette.xlsx')
         
     colors=['r','g','b','k']
     marks=['x','d','o']
     #for cmo,m in zip(cm_orientation,marks):
-    for data,name,c in zip(cm_orientation,totake,colors):
+    for name,c in zip(cm_orientation.keys(),colors):
+        data=list(cm_orientation[name].values())
+        data.sort(reverse=True)
         plt.plot(x,data,'-',color=c,marker='o',lw=2,label=name+'_computed')
     
     for name,c in zip(totake,colors):
         plt.plot(x,rtaa_data[name],'--',color=c,lw=2,label=name+'_ref')
-    
+    plt.ylim(0,1)
+    plt.xlim(0.1,1.1)
     plt.legend()
     plt.show()
     
+    """
+   
+    #filename = 'data/villa.ifc'
+
+    #ifc_file= ifcopenshell.open(filename)
     
-   """
+    rsv=rtaa_ventilation_study(filename)
+    lgt4b=[499,705,731,757,783,809,859]
+    lgt4b=[499]
+
+    
+    rsv.add_space_elements(lgt4b,[])#,['IfcSpace'])
+    rsv.add_opening_elements([],['IfcWindow','IfcDoor'])
+    
+    
+    #rsv.add_space_elements([],['IfcSpace'])
+    #rsv.add_opening_elements([],['IfcWindow'])
+    
+    rsv.set_geometries()
+    rsv.run()
+    rsv.display()
+    
     
     
     
