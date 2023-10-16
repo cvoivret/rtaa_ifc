@@ -1,5 +1,6 @@
 from collections import defaultdict
 import itertools
+import os
 from itertools import compress,tee,combinations
 from collections import Counter
 from array import array
@@ -89,6 +90,23 @@ def pairwise(iterable):
     a, b = tee(iterable)
     next(b, None)
     return zip(a, b)
+
+
+
+
+
+setting=ifcopenshell.geom.settings()
+setting.set(setting.USE_PYTHON_OPENCASCADE, True)
+
+
+
+
+
+
+
+
+
+
     
 def fuse_listOfShape(los,FuzzyValue=1e-6):
     """
@@ -1287,8 +1305,11 @@ class project_location:
         pass
     
     def load_irradiance(self):
+        absolute_path = os.path.dirname(__file__)
+        relative_path = "data/meteo_rtaa.xlsx"
+        full_path = os.path.join(absolute_path, relative_path)
         # depend on the location 
-        meteo=pd.read_excel('data/meteo_rtaa.xlsx')
+        meteo=pd.read_excel(full_path)
         
         #self._dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
         dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
@@ -1502,7 +1523,7 @@ class rtaa_solar_study:
     def __init__(self,ifcfilename):
         setting=ifcopenshell.geom.settings()
         setting.set(setting.USE_PYTHON_OPENCASCADE, True)
-        self._ifc_file= ifcopenshell.open(filename)
+        self._ifc_file= ifcopenshell.open(ifcfilename)
         self._solar_elements=dict()
         self._building_elements=dict()
         print(" ifc file ",self._ifc_file)
@@ -2181,8 +2202,7 @@ if __name__ == "__main__":
 
     # Initialize a graphical display window (from ifcos)
 
-    setting=ifcopenshell.geom.settings()
-    setting.set(setting.USE_PYTHON_OPENCASCADE, True)
+    
 
     filename = 'data/Rtaa_validation_run_onewindow.ifc'
     filename = 'data/Rtaa_validation_run.ifc'
@@ -2275,6 +2295,7 @@ if __name__ == "__main__":
 
     #ifc_file= ifcopenshell.open(filename)
     
+    """
     rsv=rtaa_ventilation_study(filename)
     lgt4b=[499,705,731,757,783,809,859]
     lgt4b=[499]
@@ -2290,7 +2311,7 @@ if __name__ == "__main__":
     rsv.set_geometries()
     rsv.run()
     rsv.display()
-    
+    """
     
     
     
