@@ -92,20 +92,8 @@ def pairwise(iterable):
     return zip(a, b)
 
 
-
-
-
 setting=ifcopenshell.geom.settings()
 setting.set(setting.USE_PYTHON_OPENCASCADE, True)
-
-
-
-
-
-
-
-
-
 
     
 def fuse_listOfShape(los,FuzzyValue=1e-6):
@@ -1910,25 +1898,54 @@ class space_ventilation_data:
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
         
         faces=list(TopologyExplorer(ss).faces())
+        # need to fuse face that have commom plane
+        lax3=[]
+        lface=[]
+        lnorm=[]
         for f in faces:
-            soil_face=False
+            
             srf = BRep_Tool().Surface(f)
             plane = Geom_Plane.DownCast(srf)
             face_norm = plane.Axis().Direction()
             if(f.Orientation()==1):
                 face_norm.Reverse()
-            ext_vec=gp_Vec(face_norm)*.1
+        
+            lax3.append(plane.Position())
+            lface.append(f)
+            lnorm.append(face_norm)
             #print('extrusion ',ext_vec.Coord())
+            
             
             # skipping horizontal face but referencing the soil one
             if( face_norm.Dot(Zaxis.Direction())<(-1+1e-5)):
                 self._soil_face=f
                 continue
-            
-            
+        #make this test at the end to enlarge the face ?
+        lcoplanar=[[] for x in lax3 ]
+        for  i,j in itertools.combinations(range(0,len(lax3)),r=2):
+            coplanar= lax3[i].IsCoplanar(lax3[j],1.e-5,1.e-5)
+            if coplanar:
+                lcoplanar[i].append(j)
+                print(i,' ',j,' ')#,lcoplanar[i])
+        newfaces=[]
+        for f,indices in zip(faces,lcoplanar):
+            if len(indices)>0:
+                los=[f]
+                [los.append(lface[i]) for i in indices]
+                print(los)
+                new=fuse_listOfShape(los)
+                #new=list(TopologyExplorer(new).faces())
+                print('new ',new)
+                newfaces.append(new)
+            else:
+                newfaces.append(f)
+        
+        for f,face_norm,coplanar in zip(newfaces,lnorm,lcoplanar):    
+            ext_vec=gp_Vec(face_norm)*.1
             extrusion = BRepPrimAPI_MakePrism(f,ext_vec,False,True).Shape()
+            
             #linter.append(extrusion)
-            #print('   ')
+            
             for wall_id,lwin in window_by_wall.items():
                 wall=wall_shapes[wall_id]
                 
@@ -1955,7 +1972,8 @@ class space_ventilation_data:
                             #lface.append(f)
                             #faceswin[win_id].extend(bigfaces)
                             self._win_by_wall[wall_id].append(win_id)
-                            self._wall_faces[wall_id].append(f)
+                            #self._wall_faces[wall_id].append(f)
+                            self._wall_faces[wall_id].extend(TopologyExplorer(f).faces())
                             self._win_faces[win_id].extend(bigfaces)
                             #svd.update(wall_id,win_id,f,bigfaces)
     
