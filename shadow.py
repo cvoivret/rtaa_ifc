@@ -1346,6 +1346,21 @@ class project_location:
         to_tn = projected.AngleWithRef(self._tn_vec,Zvec)
         #print(" angle_tn ",to_tn)
         return to_tn
+        
+    def face_orientation_sector(self,face):
+        to_tn=self.face_orientation_angle_tn(face)
+        
+        orientation=None
+        if(abs(to_tn)<=np.pi/4.):
+            orientation='nord'
+        elif ( to_tn>np.pi/4.) & (to_tn<=3.*np.pi/4.):
+            orientation='est'
+        elif ( to_tn<-np.pi/4.) & (to_tn>=-3.*np.pi/4.):
+            orientation='ouest'
+        elif ( abs(to_tn)>3.*np.pi/4.):
+            orientation='sud'
+        return orientation
+        
     
     def mask_critical_period(self,face):
         
@@ -1508,6 +1523,7 @@ class project_location:
     
     
 class rtaa_solar_study:
+    
     def __init__(self,ifcfilename):
         setting=ifcopenshell.geom.settings()
         setting.set(setting.USE_PYTHON_OPENCASCADE, True)
@@ -1851,7 +1867,13 @@ class rtaa_ventilation_study:
         
         start_display()
         
-    
+    def export_raw(self):
+        print([hasattr(r,'_win_data') for r in self._results])
+        win=pd.concat([r._win_data for r in self._results if hasattr(r,'_win_data')])
+        wall = pd.concat([r._wall_data for r in self._results if hasattr(r,'_wall_data')])
+        
+        return win,wall
+           
     
     def run(self):
         self._results=[]
@@ -1868,9 +1890,13 @@ class rtaa_ventilation_study:
             #print("\n\n")
             svd.info()
             svd.sweeping(self._window_shapes)
-            svd.opening_ratio()
+            #svd.analyze_faces()
+            svd.opening_ratio(self._proj_loc)
+            
             self._results.append(svd)
-        
+        win,wall=self.export_raw()
+        print(win)
+        print(wall)
        
             
 
@@ -1880,6 +1906,7 @@ class space_ventilation_data:
         self._win_by_wall=defaultdict(list)
         self._wall_faces =defaultdict(list)
         self._win_faces  =defaultdict(list)
+        
 
     
     def extract_faces(self,ifcspace,window_by_wall,wall_shapes,windows_shapes):
@@ -1928,10 +1955,12 @@ class space_ventilation_data:
                 lcoplanar[i].append(j)
                 print(i,' ',j,' ')#,lcoplanar[i])
         newfaces=[]
+        toremove=[]
         for f,indices in zip(faces,lcoplanar):
             if len(indices)>0:
                 los=[f]
                 [los.append(lface[i]) for i in indices]
+                toremove.extend(indices)
                 print(los)
                 new=fuse_listOfShape(los)
                 #new=list(TopologyExplorer(new).faces())
@@ -1939,7 +1968,16 @@ class space_ventilation_data:
                 newfaces.append(new)
             else:
                 newfaces.append(f)
-        
+        # remove face that are in indices 
+        toremove.sort(reverse=True)
+        #print(' new face ',len(newfaces))
+        #print(' to remove ',toremove)
+        for i in toremove:
+            newfaces.pop(i)
+            lnorm.pop(i)
+            lcoplanar.pop(i)
+                
+        #print(' new face ',newfaces)
         for f,face_norm,coplanar in zip(newfaces,lnorm,lcoplanar):    
             ext_vec=gp_Vec(face_norm)*.1
             extrusion = BRepPrimAPI_MakePrism(f,ext_vec,False,True).Shape()
@@ -1974,11 +2012,12 @@ class space_ventilation_data:
                             self._win_by_wall[wall_id].append(win_id)
                             #self._wall_faces[wall_id].append(f)
                             self._wall_faces[wall_id].extend(TopologyExplorer(f).faces())
+                            print(wall_id,' ',self._wall_faces[wall_id])
                             self._win_faces[win_id].extend(bigfaces)
                             #svd.update(wall_id,win_id,f,bigfaces)
     
-        
-    def opening_ratio(self):
+    
+    def opening_ratio(self,projloc):
         if(len(self._win_by_wall.keys())==0):
             print("No opening in this space")
             return
@@ -1993,31 +2032,90 @@ class space_ventilation_data:
         
         wall_area=defaultdict(list)
         wall_area_total=dict()
-        win_by_wall_area_total=dict()
+        wall_angle=dict()
+        wall_orient=dict()
         for wall_id,f_list in self._wall_faces.items():
+            angles=[]
+            orient=[]
             for f in f_list:
                 brepgprop_SurfaceProperties(f,gpp)
                 wall_area[wall_id].append(gpp.Mass())
+                angles.append(round(projloc.face_orientation_angle_tn(f),6))
+                orient.append(projloc.face_orientation_sector(f))
+            wall_angle[wall_id]=list(set(angles))[0]
+            wall_orient[wall_id]=list(set(orient))[0]
             wall_area_total[wall_id]=sum(wall_area[wall_id])
+        
         
         win_area=defaultdict(list)
         win_area_total=dict()
         win_area_by_wall=defaultdict(float)
         
+        
+        win_rtaa_poro=dict()
+                       
         for win_id,f_list in self._win_faces.items():
+            win_rtaa_poro[win_id]=1.0
             for f in f_list: 
                 brepgprop_SurfaceProperties(f,gpp)
+                
                 win_area[win_id].append(gpp.Mass())
             win_area_total[win_id]= sum(win_area[win_id]) 
             
             win_area_by_wall[wall_by_win[win_id]]+=sum(win_area[win_id])
-            
+        
+        # room winid poro
+        win_ids=list(self._win_faces.keys())
+        space_name= [self._space.Name]*len(win_ids)
+        space_id= [self._space.id()]*len(win_ids)
+        poros= [ win_rtaa_poro[win_id] for win_id in  win_ids]
+        areas =[ win_area_total[win_id] for win_id in  win_ids]
+        
+        data={'space_name':space_name,
+              'space_id':space_id,
+              'win_ifc_id':win_ids,
+              'rtaa_poro':poros,
+              'area':areas}
+        win_data=pd.DataFrame(data)
+        self._win_data=win_data
+        
+        print(win_data)
+        
+        wall_ids=list(self._win_by_wall.keys())
+        space_name= [self._space.Name]*len(wall_ids)
+        space_id= [self._space.id()]*len(wall_ids)
+        wall_areas =[ wall_area_total[wall_id] for wall_id in  wall_ids]
+        win_areas =[ win_area_by_wall[wall_id] for wall_id in  wall_ids]
+        wall_angle=[wall_angle[wall_id] for wall_id in wall_ids]
+        wall_orient=[ wall_orient[wall_id] for wall_id in wall_ids]
+        data={'space_name':space_name,
+              'space_id':space_id,
+              'wall_ifc_id':wall_ids,
+              'wall_area':wall_areas,
+              'win_area':win_areas,
+              'wall_angle':wall_angle,
+              'wall_orient':wall_orient}
+        wall_data=pd.DataFrame(data)
+        wall_data.sort_values(by=['win_area'],ascending=False,inplace=True)
+        self._wall_data=wall_data
+        print(wall_data)
+        
+        self._opening_ratio=wall_data['win_area'].sum()/wall_data['wall_area'][0]
+        print(self._opening_ratio)
+        
+        
+        """
+        largest_opened_wall_id=max(win_area_by_wall,key=win_area_by_wall.get)
         # largest window area
         print('\n\n')
-        print('win area total')
-        print(win_area_total)
-        print(win_area_by_wall)
-        largest_opened_wall_id=max(win_area_by_wall,key=win_area_by_wall.get)
+        print('Area of each window ')
+        for k,v in win_area_total.items():
+            print('  win id ',k,' : ',v)
+        #print(win_area_total)
+        print(' Area of window on each wall ')
+        for k,v in win_area_by_wall.items():
+            print('  wall id ',k,' : ',v, ' // wall area : ',wall_area_total[k] )
+       
         print(" largest opening is ",largest_opened_wall_id)
         #for k,v in self._win_by_wall.items():
         #    if largest_windows_id in v:
@@ -2042,16 +2140,10 @@ class space_ventilation_data:
         print(' Opening Analysis results ')
         print(result)
         print('     opening ratio ', (result['A2']+sum(result['A3s']))/result['A1'])
-        """
-        opening_ratio=(win_area_total[largest_windows_id]+other_windows_area)/wall_area_total[wall_largest_window]
-        print(" wall area of the largest window",wall_largest_window," ",wall_area_total[wall_largest_window])
-        print(" largest window area",win_area_total[largest_windows_id])
-        print(" sum of others window area ", other_windows_area)
-        print(" opening ratio (no porosity) ",opening_ratio)
-        """
+      
         
         porosity=1.0
-    
+        """
     def sweeping(self,windows_shapes):
         # compute and analyze intersection face and curve linking two windows
         
@@ -2229,7 +2321,22 @@ if __name__ == "__main__":
     #ifc_file= ifcopenshell.open('data/Rtaa_validation_run.ifc')
 
 
-    filename='C:/Users/cvoivret/source/canopia_ifcocc/data/DCE_CDV_BAT.ifc'
+    filename='C:/Users/cvoivret/source/ventilation_test/DCE_CDV_BAT.ifc'
+    
+    #filename='DCE_CDV_BAT.ifc'
+
+    rsv=rtaa_ventilation_study(filename)
+    lgt4b=[499,705,731,757,783,809,859]
+    windows=[14407,15736,7565]
+    
+    rsv.add_space_elements([],['IfcSpace'])#,['IfcSpace'])
+    rsv.add_opening_elements([],['IfcWindow'])
+    rsv.set_geometries()
+    rsv.run()
+    rsv.display()
+    
+    
+    
     
     """
     tn_angle=[0.0,np.pi*.5,np.pi,3.*np.pi*.5]
