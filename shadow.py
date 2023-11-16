@@ -11,6 +11,7 @@ import sunposition as sunpos
 from  datetime import datetime
 from timezonefinder import TimezoneFinder
 import pytz
+#import networkx as nx
 
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import ImageGrid
@@ -34,7 +35,7 @@ from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox,BRepPrimAPI_MakePrism,BRepP
 from OCC.Core.BRepGProp import brepgprop_SurfaceProperties,brepgprop_VolumeProperties,brepgprop_LinearProperties
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Sewing,BRepBuilderAPI_MakeSolid,BRepBuilderAPI_MakeFace
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Copy,	BRepBuilderAPI_Transform
-from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
+from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut,BRepAlgoAPI_Fuse
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
 from OCC.Core.BRepTools import breptools_UVBounds
 
@@ -55,7 +56,7 @@ from OCC.Core.TopTools import TopTools_ListOfShape,TopTools_IndexedMapOfShape
 from OCC.Core.TopExp import topexp_MapShapes
 from OCC.Core.TopAbs import TopAbs_SOLID,TopAbs_FACE,TopAbs_SHELL,TopAbs_WIRE
 
-from OCC.Extend.TopologyUtils import TopologyExplorer, WireExplorer
+from OCC.Extend.TopologyUtils import TopologyExplorer, WireExplorer,TopoDS_Iterator
 
 from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
 
@@ -1273,6 +1274,7 @@ class project_location:
         self._longitude= h+m/60+(s+ms*1e-6)/3600
         print("latitude : ",self._latitude)
         print("longitude: ",self._longitude)
+        print("altitude : ",ifcsite.RefElevation)
         
         self._region = 'reunion'
         
@@ -1794,14 +1796,11 @@ class rtaa_ventilation_study:
     
     def add_space_elements(self,ids=[],types=[]):
         self._add_elements(ids,types,'spaces')
-        print(" Number of elements for solar analysis: ",len(self._space_elements.keys()))
+        print(" Number of space for analysis: ",len(self._space_elements.keys()))
     
     def remove_spaces_elements(self,ids=[]):
         self._remove_elements(ids,types,'spaces')
-        
-    
-    
-    
+            
         
     def add_opening_elements(self,ids=[],types=[]):
         self._add_elements(ids,types,'openings')
@@ -1810,7 +1809,56 @@ class rtaa_ventilation_study:
     def remove_openings_elements(self,ids=[]):
         self._remove_elements(ids,types,'openings')    
                 
-
+    def remove_overlapping_spaces(self):
+        #print(self._space_elements)
+        sorted_el = dict(sorted(self._space_elements.items()))
+        #print(sorted_el)
+        shapes = [ ifcelement_as_solid(el) for el in sorted_el.values()]
+        combishapes=itertools.combinations(shapes,2)
+        combiid = itertools.combinations(sorted_el.keys(),2)
+        map=defaultdict(list)
+        for (s1,s2),(id1,id2) in zip(combishapes,combiid):
+            s=BRepAlgoAPI_Common(s1,s2).Shape()
+            
+            solids=list(TopologyExplorer(s).solids())
+            if( len(solids)>0):
+                # identical spaces
+                cut12=BRepAlgoAPI_Cut(s1,s2).Shape()
+                cut12list=list(TopologyExplorer(cut12).solids())
+                
+                cut21=BRepAlgoAPI_Cut(s2,s1).Shape()
+                cut21list=list(TopologyExplorer(cut21).solids())
+                
+                cutunion = BRepAlgoAPI_Fuse(cut12,cut21).Shape()
+                cutcut=BRepAlgoAPI_Cut(s,cutunion).Shape()
+                cutcutlist=list(TopologyExplorer(cutcut).solids())
+                print(cutcutlist)
+                print( len(cut12list),' ',len(cut21list),' ', len(cutcutlist))
+                
+                if( (len(cut12list)==0 )& (len(cut21list)==0)):
+                    #identical space
+                    map[id1].extend()
+                elif ( (len(cut12list)==1 )& (len(cut21list)==0)):
+                    # 1 include 2
+                    # could test if the inclusion is on the same profile
+                    # just a question of extrusion height
+                    map[id1].append(id2)
+                elif (( len(cut12list)==0 )& (len(cut21list)==1)):
+                    # 2 include 1
+                    map[id2].append(id1)
+                
+        #print(map)            
+        G=nx.Graph()
+        for k,v in map.items():
+            # compute union of spaces
+            #compare to
+            print(k,' ',v)
+            for vertex in v:
+                G.add_edge(k,vertex)
+            
+        plt.show()
+        
+        
     def set_geometries(self):
         
         op_ids=set(self._opening_elements.keys())
@@ -1832,6 +1880,7 @@ class rtaa_ventilation_study:
                 
                 for op in l_op:
                     opening=self._ifc_file.by_id(op)
+                    
                     self._window_shapes[opening.id()]=ifcelement_as_solid(opening)
     
     def display(self):
@@ -1868,15 +1917,46 @@ class rtaa_ventilation_study:
         start_display()
         
     def export_raw(self):
-        print([hasattr(r,'_win_data') for r in self._results])
-        win=pd.concat([r._win_data for r in self._results if hasattr(r,'_win_data')])
-        wall = pd.concat([r._wall_data for r in self._results if hasattr(r,'_wall_data')])
         
-        return win,wall
+        
+        with pd.ExcelWriter('output.xlsx',mode='w') as writer:  
+            
+            lwin=[r._win_data for r in self._results if hasattr(r,'_win_data')]
+            win=pd.DataFrame()
+            if(len(lwin)>0):
+                win  = pd.concat(lwin)
+                win_name=[ self._ifc_file.by_id(w_id).Name for w_id in win['id_ouverture']]
+                #print(win_name)
+                #print(win)
+                win.insert(2,'nom_fenetre',win_name)
+                #print(win)
+                win.reset_index(drop=True,inplace=True)
+                print(win.head())
+                win.to_excel(writer, sheet_name='fenetres')
+            
+            lwall=[r._wall_data for r in self._results if hasattr(r,'_wall_data')]
+            wall=pd.DataFrame()
+            if(len(lwall)>0):
+                wall = pd.concat(lwall)
+                wall.reset_index(drop=True,inplace=True)
+                wall.to_excel(writer, sheet_name='parois')
+                
+            lsweep=[r._sweep_data for r in self._results if hasattr(r,'_sweep_data')]
+            sweep=pd.DataFrame()
+            if len(lsweep)>0:
+                sweep= pd.concat(lsweep)
+                sweep.reset_index(drop=True,inplace=True)
+                sweep.to_excel(writer, sheet_name='balayage')
+
+        return win,wall,sweep
            
     
     def run(self):
         self._results=[]
+        
+        #self.remove_overlapping_spaces()
+        #sdcds
+        
         for ifcspaceid in self._space_elements:
             
             ifcspace = self._ifc_file.by_id(ifcspaceid)
@@ -1894,9 +1974,11 @@ class rtaa_ventilation_study:
             svd.opening_ratio(self._proj_loc)
             
             self._results.append(svd)
-        win,wall=self.export_raw()
+            
+        win,wall,sweep=self.export_raw()
         print(win)
         print(wall)
+        print(sweep)
        
             
 
@@ -1953,7 +2035,7 @@ class space_ventilation_data:
             coplanar= lax3[i].IsCoplanar(lax3[j],1.e-5,1.e-5)
             if coplanar:
                 lcoplanar[i].append(j)
-                print(i,' ',j,' ')#,lcoplanar[i])
+                #print(i,' ',j,' ')#,lcoplanar[i])
         newfaces=[]
         toremove=[]
         for f,indices in zip(faces,lcoplanar):
@@ -1961,10 +2043,10 @@ class space_ventilation_data:
                 los=[f]
                 [los.append(lface[i]) for i in indices]
                 toremove.extend(indices)
-                print(los)
+                #print(los)
                 new=fuse_listOfShape(los)
                 #new=list(TopologyExplorer(new).faces())
-                print('new ',new)
+                #print('new ',new)
                 newfaces.append(new)
             else:
                 newfaces.append(f)
@@ -2012,7 +2094,7 @@ class space_ventilation_data:
                             self._win_by_wall[wall_id].append(win_id)
                             #self._wall_faces[wall_id].append(f)
                             self._wall_faces[wall_id].extend(TopologyExplorer(f).faces())
-                            print(wall_id,' ',self._wall_faces[wall_id])
+                            #print(wall_id,' ',self._wall_faces[wall_id])
                             self._win_faces[win_id].extend(bigfaces)
                             #svd.update(wall_id,win_id,f,bigfaces)
     
@@ -2068,18 +2150,19 @@ class space_ventilation_data:
         win_ids=list(self._win_faces.keys())
         space_name= [self._space.Name]*len(win_ids)
         space_id= [self._space.id()]*len(win_ids)
+        
         poros= [ win_rtaa_poro[win_id] for win_id in  win_ids]
         areas =[ win_area_total[win_id] for win_id in  win_ids]
         
-        data={'space_name':space_name,
-              'space_id':space_id,
-              'win_ifc_id':win_ids,
-              'rtaa_poro':poros,
-              'area':areas}
+        data={'nom_espace':space_name,
+              'id_espace':space_id,
+              'id_ouverture':win_ids,
+              'rtaaporo_ouverture':poros,
+              'aire_ouverture':areas}
         win_data=pd.DataFrame(data)
         self._win_data=win_data
         
-        print(win_data)
+        
         
         wall_ids=list(self._win_by_wall.keys())
         space_name= [self._space.Name]*len(wall_ids)
@@ -2088,62 +2171,20 @@ class space_ventilation_data:
         win_areas =[ win_area_by_wall[wall_id] for wall_id in  wall_ids]
         wall_angle=[wall_angle[wall_id] for wall_id in wall_ids]
         wall_orient=[ wall_orient[wall_id] for wall_id in wall_ids]
-        data={'space_name':space_name,
-              'space_id':space_id,
-              'wall_ifc_id':wall_ids,
-              'wall_area':wall_areas,
-              'win_area':win_areas,
-              'wall_angle':wall_angle,
-              'wall_orient':wall_orient}
+        data={'nom_espace':space_name,
+              'id_espace':space_id,
+              'id_paroi':wall_ids,
+              'aire_paroi':wall_areas,
+              'aire_ouverture':win_areas,
+              'angleNord_paroi':wall_angle,
+              'secteurOrient_paroi':wall_orient}
         wall_data=pd.DataFrame(data)
-        wall_data.sort_values(by=['win_area'],ascending=False,inplace=True)
+        wall_data.sort_values(by=['aire_paroi'],ascending=False,inplace=True)
         self._wall_data=wall_data
-        print(wall_data)
         
-        self._opening_ratio=wall_data['win_area'].sum()/wall_data['wall_area'][0]
-        print(self._opening_ratio)
+        self._opening_ratio=wall_data['aire_ouverture'].sum()/wall_data['aire_paroi'][0]
         
         
-        """
-        largest_opened_wall_id=max(win_area_by_wall,key=win_area_by_wall.get)
-        # largest window area
-        print('\n\n')
-        print('Area of each window ')
-        for k,v in win_area_total.items():
-            print('  win id ',k,' : ',v)
-        #print(win_area_total)
-        print(' Area of window on each wall ')
-        for k,v in win_area_by_wall.items():
-            print('  wall id ',k,' : ',v, ' // wall area : ',wall_area_total[k] )
-       
-        print(" largest opening is ",largest_opened_wall_id)
-        #for k,v in self._win_by_wall.items():
-        #    if largest_windows_id in v:
-        #        wall_largest_window=k
-        
-        # print the details : Area of each opening, associated wall area
-        
-        other_walls=list(self._win_by_wall.keys())
-        other_walls.remove(largest_opened_wall_id)
-        other_windows_area=list()
-        for wall_id in other_walls:
-            for win_id in self._win_by_wall[wall_id]:
-                # aera of the window / area of the hosting wall
-                ratio = win_area_total[win_id]/wall_area_total[ wall_by_win[win_id]]
-                #print( win_id,' ',ratio)
-                if ratio >0.1:
-                    other_windows_area.append(win_area_total[win_id])
-        result={}
-        result['A1']= wall_area_total[largest_opened_wall_id]
-        result['A2']= win_area_by_wall[largest_opened_wall_id]
-        result['A3s']= other_windows_area
-        print(' Opening Analysis results ')
-        print(result)
-        print('     opening ratio ', (result['A2']+sum(result['A3s']))/result['A1'])
-      
-        
-        porosity=1.0
-        """
     def sweeping(self,windows_shapes):
         # compute and analyze intersection face and curve linking two windows
         
@@ -2271,13 +2312,36 @@ class space_ventilation_data:
             for p1,p2 in pairwise(path):
                 length+=p1.Distance(p2)
                 #print('lenth ',length ,' divided (must be >1) ', length/(half_diag))
-                length_between_mc[(win_id1,win_id2)]=length/half_diag
+                length_between_mc[(win_id1,win_id2)]=length
         
+        
+        temp=list(length_between_mc.keys())
+        win_id1 = [t[0] for t in temp]
+        win_id2 = [t[1] for t in temp]
+        l= list(length_between_mc.values())
+        space_name= [self._space.Name]*len(temp)
+        space_id= [self._space.id()]*len(temp)
+        halfdiag = [half_diag]*len(temp)
+        data={'nom_espace':space_name,
+              'id_espace':space_id,
+              'id_win1':win_id1,
+              'id_win2':win_id2,
+              'distance':l,
+              'demidiag':halfdiag,
+              }
+        sweep_data=pd.DataFrame(data)
+        self._sweep_data = sweep_data
+        
+        print(sweep_data)
+        """
         print(' Sweeping (must be >1) : ' )
         for k,v in length_between_mc.items():
             print('     ',k[0],' ',k[1],' ',v)
         print(length_between_mc)
-        return length_between_mc
+        """
+        #self._sweeping_data=length_between_mc
+        
+        return sweep_data
     
       
     def info(self):
@@ -2288,6 +2352,7 @@ class space_ventilation_data:
             print("     wall id ",wall_id)
             for w in win_list:
                 print("         win id ",w)
+        """
         print('*** Space face by wall id in this space')
         for wall_id,face_list in self._wall_faces.items():
             print("     wall id ",wall_id)
@@ -2298,6 +2363,7 @@ class space_ventilation_data:
             print("     wall id ",wall_id)
             for w in face_list:
                 print("         face ",w)
+        """
         print('\n')            
      
 
@@ -2320,10 +2386,14 @@ if __name__ == "__main__":
     #ifc_file= ifcopenshell.open('data/simple_reunion_northaligned.ifc')
     #ifc_file= ifcopenshell.open('data/Rtaa_validation_run.ifc')
 
+    filename = 'C:/Users/cvoivret/Downloads/2331-BMD_ESQ_231109.ifc'
+    rss=rtaa_solar_study(filename)
+    rss.add_building_elements([],['IfcWall','IfcSlab'])
+    rss.add_solar_elements([],['IfcWindow'])
+    rss.set_geometries()
 
+    """
     filename='C:/Users/cvoivret/source/ventilation_test/DCE_CDV_BAT.ifc'
-    
-    #filename='DCE_CDV_BAT.ifc'
 
     rsv=rtaa_ventilation_study(filename)
     lgt4b=[499,705,731,757,783,809,859]
@@ -2334,7 +2404,7 @@ if __name__ == "__main__":
     rsv.set_geometries()
     rsv.run()
     rsv.display()
-    
+    """
     
     
     
