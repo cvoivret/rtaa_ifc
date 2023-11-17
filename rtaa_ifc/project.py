@@ -18,6 +18,20 @@ class project_location:
         pass
         
     def set_northing_from_ifc(self,ifc_file):
+        """Set the true north vector by the value found in ifc file
+
+        Parameters
+        ----------
+        ifc_file : ifc file object
+            the file describing the project
+        
+
+        Returns
+        -------
+        none
+            
+        """
+
         repr_context = ifc_file.by_type('IfcGeometricRepresentationContext',False)
         project_repre = repr_context[0]
         true_north = project_repre.TrueNorth
@@ -31,23 +45,26 @@ class project_location:
         Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
         
-        # transformation to apply to convert in project coordinates
-        # any vector expressed in world coordinate (sun direction)
-        #self._tn_angle_sgn = self._tn_vec.AngleWithRef(gp_Vec(Yaxis.Direction()),gp_Vec(Zaxis.Direction()))
         self._tn_angle =self._tn_vec.Angle(gp_Vec(Yaxis.Direction()))
         
         print("Angle true North : ",self._tn_angle)
         
-        #print("Signed angle : ", self._tn_angle_sgn)
-        """
-        self._tn_rotation = gp_Trsf()
-        self._tn_rotation.SetRotation(Zaxis,self._tn_angle)
-        print("TN vector : ",(Yaxis.Direction().Transformed(self._tn_rotation).Coord()))
-        """
         
     def update_northing_from_angle(self,new_tn):
-        #self._tn_angle_sgn = new_tn
-        self._tn_angle     = np.abs(new_tn)
+        """Set the true north vector with a angle value vector
+
+        Parameters
+        ----------
+        new_tn : float
+            Angle between Yaxis and true north
+        
+
+        Returns
+        -------
+        none
+            
+        """
+        self._tn_angle     = new_tn
         
         print("Angle true North (updated): ",self._tn_angle)
         
@@ -66,6 +83,19 @@ class project_location:
         
     
     def set_location_from_ifc(self,ifc_file):
+        """Set the location of the project, find the time zone
+
+        Parameters
+        ----------
+        ifc_file : ifc file object
+            the file describing the project
+        
+
+        Returns
+        -------
+        none
+            
+        """
         ## Site location
         ifcsite = ifc_file.by_type('IfcSite')[0]
         h,m,s,ms = ifcsite.RefLatitude
@@ -105,34 +135,22 @@ class project_location:
         dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
 
         self._irradiance=meteo.assign(time=dt_index.values)
-        
-        
-        """
-        self._critical_period_mask={}
-        self._critical_period_mask['reunion']={
-        'north':(self._dt_index.strftime("%m-%d")<='04-30')*(self._dt_index.strftime("%m-%d")>='02-01'),
-        'ew':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01'),
-        'south':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01')
-        }
-        self._critical_period_mask['guyane']={
-        'north':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
-        'ew':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
-        'south':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='08-01')
-        }
-        """
-    """        
-    def sunpos(self,dt_index):
-        print(self._irradiance)
-        vectors, zen_vec, az_vec = self.sun_vectors(dt_index)
-        irradiance=self._irradiance[dt_index]
-        print(self._dt_index)
-        self._irradiance['zenith']=zen_vec
-        self._irradiance['azimuth']=az_vec
-        
-        return vectors, self._irradiance
-    """           
+            
     
     def face_orientation_angle_tn(self,face):
+        """Compute the angle between a normal face and 
+        the true north direction
+
+        Parameters
+        ----------
+        face : Face
+            
+        Returns
+        -------
+        to_tn : float
+            The angle between the face normal and the true north direction
+            
+        """        
         srf = BRep_Tool().Surface(face)
         plane = Geom_Plane.DownCast(srf)
         face_norm = plane.Axis().Direction()
@@ -150,6 +168,18 @@ class project_location:
         return to_tn
         
     def face_orientation_sector(self,face):
+        """Compute the orientation of a face according to the RTAA.
+        
+        Parameters
+        ----------
+        face : Face
+                    
+
+        Returns
+        -------
+        orientation : str
+            
+        """        
         to_tn=self.face_orientation_angle_tn(face)
         
         orientation=None
@@ -165,9 +195,19 @@ class project_location:
         
     
     def mask_critical_period(self,face):
+        """Depending on the orientation of the face, return the table of
+        datetime needed to compute the shading factor according to the RTAA
+
+        Parameters
+        ----------
+        face : Face
+            the file describing the project
+        Returns
+        -------
+        mask : np.array(bool)
+            
+        """        
         
-        # as a function of region return the correct list of sun_position
-        # compute face normal and determine the time mask
         to_tn=self.face_orientation_angle_tn(face)
         
         orientation=None
@@ -193,50 +233,27 @@ class project_location:
         else :
             print("NOT implemented ")
             return
-        """
-        self._critical_period_mask={}
-        self._critical_period_mask['reunion']={
-        'north':(self._dt_index.strftime("%m-%d")<='04-30')*(self._dt_index.strftime("%m-%d")>='02-01'),
-        'ew':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01'),
-        'south':(self._dt_index.strftime("%m-%d")<='02-28')*(self._dt_index.strftime("%m-%d")>='01-01')
-        }
-        self._critical_period_mask['guyane']={
-        'north':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
-        'ew':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='07-01'),
-        'south':(self._dt_index.strftime("%m-%d")<='11-30')*(self._dt_index.strftime("%m-%d")>='08-01')
-        }
-                
-        return self._critical_period_mask['reunion'][orientation]
-        """
-        
-        """
-        # secteur angulaire
-        mask=self._critical_period_mask['reunion'][orientation]
-        # filtering
-        v,_=self.irr_sunpos()
-        mask_v = list(np.argwhere(mask).flatten())
-        #print(v)
-        return list(compress(v,mask_v)),self._irradiance[mask]
-        """
+       
      
     def data_critical_period_day(self,face):
-    
+        """Compute the irradiance and sun position vector for the critical 
+        period for the face 
+
+        Parameters
+        ----------
+        face : Face
+            the file describing the project
+        
+
+        Returns
+        -------
+        ( l_vec_day, irr_crit_day): (list(Gp_Vec),pd.DataFrame)
+            For day hours : list of sun position vector and irradiance
+            
+        """    
         
         mask = self.mask_critical_period(face)
-        """
-        dt_index=pd.DatetimeIndex(self._irradiance.time)
-        lvec,zen_vec,az_vec= self.sun_vectors(dt_index)
-        self._irradiance['az']=az_vec
-        self._irradiance['zen']=zen_vec
         
-        for v,z in zip(lvec,zen_vec):
-            print(v.Coord(),' ',90-z)
-        daytime = (90.-zen_vec)>=0.0
-        """
-        
-        
-        
-        #dt = self._irradiance[mask]
         irr_crit = self._irradiance[mask].copy()
         
         #print(self._irradiance)
@@ -256,37 +273,30 @@ class project_location:
         
         daytime = (90.-zen_vec)>=0.0
         irr_crit_day=irr_crit[daytime]
-        #print(irr_crit_day)
-        """
-        # filtering vectors of sun direction
-        #mask_v = list(np.argwhere(daytime).flatten())
-        print( 'daytime shape ',daytime.shape)
-        print(' len mask v ',len(mask_v))
-        #lvec_day=list(compress(lvec,mask_v))
-        print( 'lvecday  shape ',len(lvec_day))
-        print(' zen vec day ',zen_vec[daytime].shape)
         
-        for v,z in zip(lvec_day):
-            print(v.Coord(),' ',90-z)
-        # filtering irradiance
-        irr_crit_day=irr_crit[daytime]
-        
-        print(irr_crit_day)
-        """
-        #cdcs
         return lvec_day,irr_crit_day
         
-        """
-        v,irradiance = self.data_critical_period(face)
-        print(" critical period date number ",irradiance.shape[0])
-        daytime= (90.-irradiance['zenith'])>=0.0
-        print(" critical period daylight number ",irradiance[daytime].shape[0])
-        #print(daytime[:20])
-        mask_v = list(np.argwhere(daytime.values).flatten())
-        return list(compress(v,mask_v)),irradiance[daytime]
-        """
+     
     
     def sun_vectors(self,dtindex):
+        """Compute the sun vector for given datetime. 
+
+        Parameters
+        ----------
+        dtindex : pandas.DatetimeIndex
+            the instants to compute solar position
+        
+
+        Returns
+        -------
+        sun_to_earth_project : list(gp_Vec)
+            list of vector
+        zen_vec : list(float)
+            list of zenith values
+        az_vec : list(float)
+            list of azimuth values
+            
+        """
         # compute the project sun position from a given time serie (local time, without TZ)
         dr_proj = dtindex.tz_localize(self._tz)
         dr_proj_utc = dr_proj.tz_convert("UTC")

@@ -1,5 +1,6 @@
 from collections import defaultdict
 from itertools import compress,tee,combinations,product
+import os
 
 #from collections import Counter
 
@@ -75,7 +76,28 @@ class space_ventilation_data:
 
     
     def extract_faces(self,ifcspace,window_by_wall,wall_shapes,windows_shapes):
-        if ifcspace.Representation is not None:
+        """Build faces that reprensents the opening. Make the link 
+        between spaces and wall. Construct part of wall that belong
+        to a space and also the window that belong to a space. By 
+        geometry only (expected to work even if the ifc file is minimal).
+
+        Parameters
+        ----------
+        ifcspace : IfcSpace
+            The space are interested in
+        window_by_wall : dict( int : int) 
+            Associate a list of window id for each wall id in the model
+        wall_shapes : dict(int:Shape)
+            Associate a shape to each wall id
+        window_shapes : dict(int:Shape)
+            Associate a shape to each window id
+        
+        Returns
+        -------
+        None
+            
+        """ 
+          if ifcspace.Representation is not None:
             ss =create_shape(setting, ifcspace).geometry
         else :
             print(" No geometry for ifcspace : ",ifcspace)
@@ -183,7 +205,20 @@ class space_ventilation_data:
     
     
     def opening_ratio(self,projloc):
-        if(len(self._win_by_wall.keys())==0):
+        """Compute the opening ratio indicator defined in RTAA. 
+
+        Parameters
+        ----------
+        projloc : project_location
+            To know the face orientations
+        
+        Returns
+        -------
+        opening_data : pd.DataFrame   
+            Data about spaces and associated openings
+            
+        """  
+         if(len(self._win_by_wall.keys())==0):
             print("No opening in this space")
             return
         #inverse mapping
@@ -269,7 +304,20 @@ class space_ventilation_data:
         
         
     def sweeping(self,windows_shapes):
-        # compute and analyze intersection face and curve linking two windows
+        """Compute the sweeping indicator defined in RTAA. Distance between 
+        two opening in the same room
+
+        Parameters
+        ----------
+        windows_shapes : dict( Shape)
+            Shapes of all windows (some kind of caching )
+        
+        Returns
+        -------
+        sweep_data : pd.DataFrame   
+            Data about windows distance in the same space
+            
+        """         # compute and analyze intersection face and curve linking two windows
         
         if( len(self._win_by_wall.keys())==0):
             print("No window in this space")
@@ -435,18 +483,7 @@ class space_ventilation_data:
             print("     wall id ",wall_id)
             for w in win_list:
                 print("         win id ",w)
-        """
-        print('*** Space face by wall id in this space')
-        for wall_id,face_list in self._wall_faces.items():
-            print("     wall id ",wall_id)
-            for w in face_list:
-                print("         face ",w)
-        print('*** Largest faces of window in this space')
-        for wall_id,face_list in self._win_faces.items():
-            print("     wall id ",wall_id)
-            for w in face_list:
-                print("         face ",w)
-        """
+       
         print('\n')  
 
 
@@ -454,10 +491,12 @@ class space_ventilation_data:
 
 
 class rtaa_ventilation_study:
-    
     def __init__(self,ifcfilename):
         setting=ifcopenshell.geom.settings()
         setting.set(setting.USE_PYTHON_OPENCASCADE, True)
+        
+        self._workingdir = os.path.dirname(ifcfilename)
+        
         self._ifc_file= ifcopenshell.open(ifcfilename)
         
         self._space_elements=dict()
@@ -524,7 +563,18 @@ class rtaa_ventilation_study:
         self._remove_elements(ids,types,'openings')    
                 
     def remove_overlapping_spaces(self):
-        #print(self._space_elements)
+        """Not finished funtion, some space can have the same extrusion bases but 
+        with different heigth
+
+        Parameters
+        ----------
+        None
+        
+        Returns
+        -------
+        None
+            
+        """         #print(self._space_elements)
         sorted_el = dict(sorted(self._space_elements.items()))
         #print(sorted_el)
         shapes = [ ifcelement_as_solid(el) for el in sorted_el.values()]
@@ -598,7 +648,17 @@ class rtaa_ventilation_study:
                     self._window_shapes[opening.id()]=ifcelement_as_solid(opening)
     
     def display(self):
+        """Display wall, spaces and windows faces used in computation
+
+        Parameters
+        ----------
+        None
         
+        Returns
+        -------
+        None
+            
+        """         
         
         def rgb_color(r, g, b):
             return Quantity_Color(r, g, b, Quantity_TOC_RGB)
@@ -631,9 +691,20 @@ class rtaa_ventilation_study:
         start_display()
         
     def export_raw(self):
+        """Generate a spreadsheet with data and results, both for analysis
+           verification of results
+
+        Parameters
+        ----------
+        None
         
-        
-        with pd.ExcelWriter('output.xlsx',mode='w') as writer:  
+        Returns
+        -------
+        None
+            
+        """        
+        filename=os.path.join(self._workingdir,'ventilation_results.xlsx')
+        with pd.ExcelWriter(filename,mode='w') as writer:  
             
             lwin=[r._win_data for r in self._results if hasattr(r,'_win_data')]
             win=pd.DataFrame()
@@ -690,9 +761,7 @@ class rtaa_ventilation_study:
             self._results.append(svd)
             
         win,wall,sweep=self.export_raw()
-        print(win)
-        print(wall)
-        print(sweep)
+        
 
 
 
