@@ -71,14 +71,11 @@ class project_location:
         origin = gp_Pnt(0.0,0.0,0.0)
         Yaxis = gp_Ax1(origin,gp_Dir(0.0,1.0,0.0))
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
-        
-        #print("
-        
+                       
         tn_rotation = gp_Trsf()
         tn_rotation.SetRotation(Zaxis,self._tn_angle)
         self._tn_vec = gp_Vec(Yaxis.Direction()).Transformed(tn_rotation)
         print("Updated angle true North : ",self._tn_vec)
-        #print("Updated Signed angle : ", self._tn_angle_sgn)
         
         
     
@@ -106,6 +103,7 @@ class project_location:
         print("longitude: ",self._longitude)
         print("altitude : ",ifcsite.RefElevation)
         
+        # TODO : detect the true region in RTAA context (not only reunion)
         self._region = 'reunion'
         
         ## datetime to compute shadow
@@ -121,17 +119,17 @@ class project_location:
         # test against a list of name
         pass
     
-    def get_critical_period_mask(self):
-        pass
+    
     
     def load_irradiance(self):
+        # must be modified to take into account other regions
+        
         absolute_path = os.path.dirname(__file__)
         relative_path = "../data/meteo_rtaa.xlsx"
         full_path = os.path.join(absolute_path, relative_path)
         # depend on the location 
         meteo=pd.read_excel(full_path)
         
-        #self._dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
         dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
 
         self._irradiance=meteo.assign(time=dt_index.values)
@@ -156,15 +154,12 @@ class project_location:
         face_norm = plane.Axis().Direction()
         if(face.Orientation()==1):
             face_norm.Reverse()
-        
-        # projection of normal on the XY plane
-        
+                        
         Zvec=gp_Vec(0.0,0.0,1.0)
         
+        # projection of the face normal on the XY plane
         projected = Zvec.CrossCrossed(gp_Vec(face_norm),Zvec)
-        #print("projected ",projected.Coord())
         to_tn = projected.AngleWithRef(self._tn_vec,Zvec)
-        #print(" angle_tn ",to_tn)
         return to_tn
         
     def face_orientation_sector(self,face):
@@ -303,7 +298,7 @@ class project_location:
         
         az_vec,zen_vec=sunpos.sunpos(dr_proj_utc,self._latitude,self._longitude,0)[:2]
         
-        #elev_vec=90-zen_vec
+        
         
         origin = gp_Pnt(0.0,0.0,0.0)
         Xaxis = gp_Ax1(origin,gp_Dir(1.0,0.0,0.0))
