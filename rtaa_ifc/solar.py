@@ -51,12 +51,7 @@ from OCC.Core.gp import (
                         gp_Ax3,
                         gp_Ax1
                         )
-from OCC.Core.gp import (
-                        gp_Pnt2d,
-                        gp_Dir2d,
-                        gp_Vec2d,
-                        gp_Lin2d
-                        )
+
 
 from OCC.Core.Geom import Geom_Plane
 
@@ -347,7 +342,7 @@ def compute_diffuse_mask_on_face(mybuilding,theface,theface_norm):
     
     # compute the direct shading factor for each direction
     dmof=direct_mask_on_face(theface,lvec)
-    dmof.compute_mask(mybuilding,min_area)
+    dmof.compute_mask(mybuilding)
     dmof.shadow_areas()
     dmof.face_area()
     dmof.mask_ratio()
@@ -479,7 +474,7 @@ class direct_mask_on_face:
         self._lsun_dir=lsun_dir
         self._mask_faces=[]
     
-    def compute_mask(self,exposed_building,min_area):
+    def compute_mask(self,exposed_building):
         """Compute the shaded area on a given face for 
         multiple solar position
 
@@ -710,7 +705,7 @@ class rtaa_on_faces:
                 
             print('direct mask')
             direct_mask = direct_mask_on_face(adjusted_face,self._lsun_dir)
-            direct_mask.compute_mask(cutted_building,1e-3)
+            direct_mask.compute_mask(cutted_building)
             direct_mask.shadow_areas()
             direct_mask.face_area()
             direct_mask.mask_ratio()
@@ -719,7 +714,7 @@ class rtaa_on_faces:
             
             print('diffuse mask ')
             diffuse_mask=diffuse_mask_on_face(adjusted_face)
-            diffuse_mask.compute_mask(cutted_building,1e-3)
+            diffuse_mask.compute_mask(cutted_building)
             diffuse_mask.compute_weighted_mask()
             print('\n')
             

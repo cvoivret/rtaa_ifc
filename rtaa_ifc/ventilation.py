@@ -1,12 +1,12 @@
 from collections import defaultdict
 from itertools import compress,tee,combinations,product
 import os
-
-#from collections import Counter
+import pandas as pd
 
 import ifcopenshell
 from ifcopenshell.geom import create_shape
-import pandas as pd
+
+
 from  project import project_location
 from geom import   (
                     ifcelement_as_solid,
@@ -17,15 +17,16 @@ from geom import   (
                     biggestface_along_vector,
                     setting
                     )
+
+
 from OCC.Display.SimpleGui import init_display
 from OCC.Core.Quantity import Quantity_Color,Quantity_TOC_RGB
 
 from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 
-from OCC.Core.gp import gp_Pnt,gp_Dir,gp_Vec,gp_Pln,gp_Lin,gp_Trsf,gp_Ax3,gp_Ax1
-from OCC.Core.gp import gp_Pnt2d,gp_Dir2d,gp_Vec2d,gp_Lin2d
+from OCC.Core.gp import gp_Pnt,gp_Dir,gp_Vec,gp_Lin,gp_Ax1
+from OCC.Core.gp import gp_Dir2d,gp_Vec2d,gp_Lin2d
 
-from OCC.Core.Geom import Geom_Plane,Geom_Line
 
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
@@ -33,19 +34,17 @@ from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut,BRepAlgoAPI
 from OCC.Core.BRepGProp import brepgprop_SurfaceProperties,brepgprop_VolumeProperties
 from OCC.Core.GProp import GProp_GProps
 
+from OCC.Core.Geom import Geom_Plane
 from OCC.Core.GeomAdaptor import GeomAdaptor_Curve
-from OCC.Core.ProjLib import projlib_Project
 from OCC.Core.GeomAPI import GeomAPI_ProjectPointOnSurf
-
 from OCC.Core.Geom2dAPI import Geom2dAPI_InterCurveCurve
 from OCC.Core.Geom2d import Geom2d_Line
-from OCC.Core.GeomAPI import geomapi_To3d
+
+from OCC.Core.ProjLib import projlib_Project
+
 from OCC.Core.ElCLib import elclib_Parameter,elclib_To3d,elclib_Value
+from OCC.Extend.TopologyUtils import TopologyExplorer
 
-
-from OCC.Extend.TopologyUtils import TopologyExplorer, WireExplorer,TopoDS_Iterator
-
-#from OCC.Core.GeomLProp import GeomLProp_SLProps
 
 def pairwise(iterable):
     # pairwise('ABCDEFG') --> AB BC CD DE EF FG
@@ -97,13 +96,13 @@ class space_ventilation_data:
         None
             
         """ 
-          if ifcspace.Representation is not None:
+        if ifcspace.Representation is not None:
             ss =create_shape(setting, ifcspace).geometry
         else :
             print(" No geometry for ifcspace : ",ifcspace)
             return
         
-        
+        # Sanitize the shape of space 
         shu=ShapeUpgrade_UnifySameDomain(ss)
         shu.Build()
         ss=shu.Shape()
@@ -112,68 +111,77 @@ class space_ventilation_data:
         Zaxis = gp_Ax1(origin,gp_Dir(0.0,0.0,1.0))
         
         faces=list(TopologyExplorer(ss).faces())
-        # need to fuse face that have commom plane
+        
+        # # the interface between a space and a wall can
+        # # be represented by multiple faces. They need to 
+        # # be fused to act like one. The criterion of selection 
+        # # of such faces is coplanarity
+        
         lax3=[]
         lface=[]
         lnorm=[]
         for f in faces:
-            
+            # skipping horizontal face but referencing the soil one
+            if( face_norm.Dot(Zaxis.Direction())<(-1+1e-5)):
+                self._soil_face=f
+                continue
+                
             srf = BRep_Tool().Surface(f)
             plane = Geom_Plane.DownCast(srf)
             face_norm = plane.Axis().Direction()
             if(f.Orientation()==1):
                 face_norm.Reverse()
-        
+            # Ax3 hold the properties of plane
             lax3.append(plane.Position())
             lface.append(f)
             lnorm.append(face_norm)
-            #print('extrusion ',ext_vec.Coord())
             
-            
-            # skipping horizontal face but referencing the soil one
-            if( face_norm.Dot(Zaxis.Direction())<(-1+1e-5)):
-                self._soil_face=f
-                continue
-        #make this test at the end to enlarge the face ?
+        #search for coplanar faces
         lcoplanar=[[] for x in lax3 ]
         for  i,j in combinations(range(0,len(lax3)),r=2):
             coplanar= lax3[i].IsCoplanar(lax3[j],1.e-5,1.e-5)
             if coplanar:
                 lcoplanar[i].append(j)
-                #print(i,' ',j,' ')#,lcoplanar[i])
+                
         newfaces=[]
         toremove=[]
         for f,indices in zip(faces,lcoplanar):
             if len(indices)>0:
+                # intial list with the face to fuse
                 los=[f]
+                # add the coplanar faces to fuse
                 [los.append(lface[i]) for i in indices]
+                # indices of face that will be fused and thus 
+                # need to be removed afterward 
                 toremove.extend(indices)
-                #print(los)
+                
                 new=fuse_listOfShape(los)
-                #new=list(TopologyExplorer(new).faces())
-                #print('new ',new)
                 newfaces.append(new)
             else:
+                # no fuse needed
                 newfaces.append(f)
-        # remove face that are in indices 
+        
+        # sort in reverse order to remove from
+        # the end while preserving indices
         toremove.sort(reverse=True)
-        #print(' new face ',len(newfaces))
-        #print(' to remove ',toremove)
         for i in toremove:
             newfaces.pop(i)
             lnorm.pop(i)
             lcoplanar.pop(i)
                 
-        #print(' new face ',newfaces)
-        for f,face_norm,coplanar in zip(newfaces,lnorm,lcoplanar):    
+        # # Searching which wall is associated to a space
+        # # by solid intersection
+        
+        for f,face_norm in zip(newfaces,lnorm):    
+            # extrusion of the vertical faces of spaces
             ext_vec=gp_Vec(face_norm)*.1
             extrusion = BRepPrimAPI_MakePrism(f,ext_vec,False,True).Shape()
             
-            #linter.append(extrusion)
-            
+            #iterating wall and window
             for wall_id,lwin in window_by_wall.items():
+                # selecting a wall
                 wall=wall_shapes[wall_id]
-                
+                # intersection of wall and extrusion
                 intersection=BRepAlgoAPI_Common(extrusion,wall)
                 intersection_wall=intersection.Shape()
                 intersection_wall_solids=list(TopologyExplorer(intersection_wall).solids())
@@ -183,7 +191,7 @@ class space_ventilation_data:
                     # Searching if a window is hosted by the 
                     # portion of wall catched by face extrusion                                         
                     for win_id in lwin:
-                        #print('win_id ',win_id)
+                        
                         win=windows_shapes[win_id]
                         
                         intersection=BRepAlgoAPI_Common(extrusion,win)
@@ -192,17 +200,15 @@ class space_ventilation_data:
                         # the wall face catch a window
                         # extracting datas from window
                         if len(intersection_win_solids)>0:
-                            bigfaces=biggestface_along_vector(win,face_norm)
-                            #lbigface.extend(bigfaces)
-                            #lface.append(f)
-                            #faceswin[win_id].extend(bigfaces)
+                            # window actually in wall for this space
                             self._win_by_wall[wall_id].append(win_id)
-                            #self._wall_faces[wall_id].append(f)
+                            # actual faces of the wall that are shared
+                            # by the space
                             self._wall_faces[wall_id].extend(TopologyExplorer(f).faces())
-                            #print(wall_id,' ',self._wall_faces[wall_id])
+                            # Extraction of supposedly glass faces
+                            bigfaces=biggestface_along_vector(win,face_norm)
                             self._win_faces[win_id].extend(bigfaces)
-                            #svd.update(wall_id,win_id,f,bigfaces)
-    
+                            
     
     def opening_ratio(self,projloc):
         """Compute the opening ratio indicator defined in RTAA. 
@@ -218,7 +224,7 @@ class space_ventilation_data:
             Data about spaces and associated openings
             
         """  
-         if(len(self._win_by_wall.keys())==0):
+        if(len(self._win_by_wall.keys())==0):
             print("No opening in this space")
             return
         #inverse mapping
@@ -228,50 +234,54 @@ class space_ventilation_data:
                 wall_by_win[win_id]=wall_id
         
         gpp=GProp_GProps()
-        
-        
+                
         wall_area=defaultdict(list)
         wall_area_total=dict()
+        
         wall_angle=dict()
         wall_orient=dict()
+        
+        # actual wall faces properties : area of each face, sum of face area
+        # angle to true north, sector
         for wall_id,f_list in self._wall_faces.items():
             angles=[]
             orient=[]
             for f in f_list:
                 brepgprop_SurfaceProperties(f,gpp)
                 wall_area[wall_id].append(gpp.Mass())
+                # since walls are generealy straight, should 
+                # contain unique value
                 angles.append(round(projloc.face_orientation_angle_tn(f),6))
                 orient.append(projloc.face_orientation_sector(f))
+            # reducing to normally unique value
             wall_angle[wall_id]=list(set(angles))[0]
             wall_orient[wall_id]=list(set(orient))[0]
+            # summing up
             wall_area_total[wall_id]=sum(wall_area[wall_id])
         
         
         win_area=defaultdict(list)
         win_area_total=dict()
         win_area_by_wall=defaultdict(float)
-        
-        
+                
+        # looking for pset !! : TO CODE
         win_rtaa_poro=dict()
                        
         for win_id,f_list in self._win_faces.items():
             win_rtaa_poro[win_id]=1.0
             for f in f_list: 
                 brepgprop_SurfaceProperties(f,gpp)
-                
                 win_area[win_id].append(gpp.Mass())
             win_area_total[win_id]= sum(win_area[win_id]) 
             
             win_area_by_wall[wall_by_win[win_id]]+=sum(win_area[win_id])
         
-        # room winid poro
+        # Exporting window datas
         win_ids=list(self._win_faces.keys())
         space_name= [self._space.Name]*len(win_ids)
         space_id= [self._space.id()]*len(win_ids)
-        
         poros= [ win_rtaa_poro[win_id] for win_id in  win_ids]
         areas =[ win_area_total[win_id] for win_id in  win_ids]
-        
         data={'nom_espace':space_name,
               'id_espace':space_id,
               'id_ouverture':win_ids,
@@ -281,7 +291,7 @@ class space_ventilation_data:
         self._win_data=win_data
         
         
-        
+        # Exporting wall and window datas
         wall_ids=list(self._win_by_wall.keys())
         space_name= [self._space.Name]*len(wall_ids)
         space_id= [self._space.id()]*len(wall_ids)
@@ -297,9 +307,12 @@ class space_ventilation_data:
               'angleNord_paroi':wall_angle,
               'secteurOrient_paroi':wall_orient}
         wall_data=pd.DataFrame(data)
+        # sorting to have the largest wall in first
         wall_data.sort_values(by=['aire_paroi'],ascending=False,inplace=True)
         self._wall_data=wall_data
-        
+        # Some filtering could be needed 
+        # but raw values are exported and must be analyzed 
+        # by user
         self._opening_ratio=wall_data['aire_ouverture'].sum()/wall_data['aire_paroi'][0]
         
         

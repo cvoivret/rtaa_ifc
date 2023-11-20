@@ -1,0 +1,3 @@
+# cache results
+/rtaa_ifc/__pycache__
+/tests/data/ventilation_results.xlsx

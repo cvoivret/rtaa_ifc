@@ -6,12 +6,9 @@ import pandas as pd
 import numpy as np
 import sunposition as sunpos
 
-from OCC.Core.gp import gp_Pnt,gp_Dir,gp_Vec,gp_Pln,gp_Lin,gp_Trsf,gp_Ax3,gp_Ax1
-from OCC.Core.gp import gp_Pnt2d,gp_Dir2d,gp_Vec2d,gp_Lin2d
-
+from OCC.Core.gp import gp_Pnt,gp_Dir,gp_Vec,gp_Trsf,gp_Ax1
 from OCC.Core.BRep import BRep_Tool
-
-from OCC.Core.Geom import Geom_Plane,Geom_Line        
+from OCC.Core.Geom import Geom_Plane        
         
 class project_location:
     def __init__(self):
