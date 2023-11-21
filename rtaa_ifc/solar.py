@@ -1187,14 +1187,6 @@ class rtaa_solar_study:
 if __name__ == "__main__":
 
     
-    filename = 'data/Rtaa_validation_run.ifc'
-    filename = 'data/Rtaa_validation_run_joues2.ifc'
-    #ifc_file= ifcopenshell.open('data/simple_reunion_northaligned.ifc')
-    #ifc_file= ifcopenshell.open('data/Rtaa_validation_run.ifc')
-
-    filename = 'C:/Users/cvoivret/Downloads/2331-BMD_ESQ_231109.ifc'
-    
-    
     filename = '../tests/data/debords_casquettes_fins.ifc'
     
     rss=rtaa_solar_study(filename)
