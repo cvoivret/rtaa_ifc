@@ -562,7 +562,12 @@ class rtaa_ventilation_study:
     
     def remove_openings_elements(self,ids=[]):
         self._remove_elements(ids,types,'openings')    
-                
+    
+
+    def set_porosite(self):
+        # looking for RTAA pset
+        # if not present, set to one for each window
+    
     def remove_overlapping_spaces(self):
         """Not finished function, some space can have the same extrusion bases but 
         with different heigth

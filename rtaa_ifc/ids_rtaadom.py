@@ -1,7 +1,10 @@
 import ifcopenshell
 import sys
-sys.path.append('../IfcOpenshell/src/ifctester')
 
+sys.path.append('../../IfcOpenshell/src/ifctester')
+
+import ifctester
+import ifctester.reporter
 from  ifctester import ids
 
 
@@ -47,33 +50,34 @@ my_ids.specifications.append(location_spec)
 ### window
 window_spec = ids.Specification(
     name="Opening porosity",
-    minOccurs=1,
+    minOccurs=0,
     maxOccurs="unbounded",
     ifcVersion="IFC4",
-    description="Existance la porosite",
+    description="Existence la porosite",
     instructions="test",
     )
 window_spec.applicability.append(ids.Entity(name="IFCWINDOW"))
 
   
 porosity = ids.Property(
-    name="porosite",
+    name='porosite',
     propertySet="Pset_rtaadom_porosite",
     datatype="IfcReal",
     instructions="sdcsct",
     )
+    
 window_spec.requirements.append(porosity)
 
 my_ids.specifications.append(window_spec)
 
 
-
+"""
 door_spec = ids.Specification(
     name="Opening porosity",
     minOccurs=1,
     maxOccurs="unbounded",
     ifcVersion="IFC4",
-    description="Existance la porosite",
+    description="Existence la porosite",
     instructions="test",
     )
 door_spec.applicability.append(ids.Entity(name="IFCDOOR"))
@@ -88,7 +92,25 @@ porosity = ids.Property(
 door_spec.requirements.append(porosity)
 
 my_ids.specifications.append(door_spec)
+"""
+
+if __name__ == "__main__":
+    
+    result = my_ids.to_xml('../tests/data/rtaa.ids')
+    
+    filepath =  '../tests/data/debords_casquettes_fins_triangle_pset.ifc'
+    ifc=ifcopenshell.open(filepath)
+    
+    my_ids.validate(ifc)
+    
+    engine = ifctester.reporter.Console(my_ids)
+    engine.report()
+    #engine.to_file('./')
+    #print( engine.to_string())
 
 
 
-result = my_ids.to_xml('rtaa.ids')
+
+
+
+
