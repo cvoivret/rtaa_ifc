@@ -121,16 +121,19 @@ class space_ventilation_data:
         lface=[]
         lnorm=[]
         for f in faces:
-            # skipping horizontal face but referencing the soil one
-            if( face_norm.Dot(Zaxis.Direction())<(-1+1e-5)):
-                self._soil_face=f
-                continue
+           
+            
                 
             srf = BRep_Tool().Surface(f)
             plane = Geom_Plane.DownCast(srf)
             face_norm = plane.Axis().Direction()
             if(f.Orientation()==1):
                 face_norm.Reverse()
+             # skipping horizontal face but referencing the soil one
+            if( face_norm.Dot(Zaxis.Direction())<(-1+1e-5)):
+                self._soil_face=f
+                continue
+            
             # Ax3 hold the properties of plane
             lax3.append(plane.Position())
             lface.append(f)
@@ -319,6 +322,7 @@ class space_ventilation_data:
     def sweeping(self,windows_shapes):
         """Compute the sweeping indicator defined in RTAA. Distance between 
         two opening in the same room
+        
 
         Parameters
         ----------
@@ -357,22 +361,24 @@ class space_ventilation_data:
         vertices=list(TopologyExplorer(self._soil_face).vertices())
         soil_pt=[BRep_Tool.Pnt(v) for v in vertices]
         
-        # computation of an approximated diagonal
+        # computation of an approximated diagonal length
         brepgprop_SurfaceProperties(self._soil_face,gpp)
         mc_soil=gpp.CentreOfMass()
         #distance from the mass center is already a proxy for half diag
         half_diag = sum([mc_soil.Distance(p) for p in soil_pt])/len(soil_pt)
         
-        #print('Demie diagonale ', half_diag)
         
         # mass center of each windows for this room
         mass_centers={}
         for wall_id,win_ids in self._win_by_wall.items():
+            # surface of the wall/space
             srf_wall=BRep_Tool().Surface(self._wall_faces[wall_id][0])
             
             for win_id in win_ids:
                 brepgprop_VolumeProperties(windows_shapes[win_id],gpp)
                 mc=gpp.CentreOfMass()
+                # projection of the mc on the face such that it is exactly
+                # over the line of the contour
                 proj=GeomAPI_ProjectPointOnSurf(gpp.CentreOfMass(),srf_wall)
                 mass_centers[win_id]=proj.Point(1)
         
@@ -380,46 +386,36 @@ class space_ventilation_data:
         for win_id1,win_id2 in combinations(mass_centers.keys(),2):
             mc1=mass_centers[win_id1]
             mc2=mass_centers[win_id2]
-            #print(" Distance between ",win_id1,' ',win_id2)
-        #for i,mc1 in enumerate(mass_centers[:-1]):
-        #    for mc2 in mass_centers[i+1::]:
-                #print(" new line ")
-                #print( mc.Coord(),' ',mc2.Coord())
-                
-            #line2d between the two mass centers
+                            
+            # projection of mass centers on the soil plane
             mc12d = projlib_Project(plane.Pln(),mc1)
             mc22d = projlib_Project(plane.Pln(),mc2)
             between_vec = gp_Vec2d(mc22d,mc12d).Normalized()
+            # line joigning the two projected mass center
             lin2d=gp_Lin2d( mc12d, gp_Dir2d(between_vec))
             
-            # intersection between the line and the soil_face edges (as line)                    
+            # intersection between the line and the soil_face edges (as line)
+            # if it intersect, we need to include a vertice in the path
+            
             lin2d_values=[]
+            
             for l,minu,maxu in llines_face:
                 inter=Geom2dAPI_InterCurveCurve(Geom2d_Line(l),Geom2d_Line(lin2d),1e-5)
                 #print(" number of intersections ",inter.NbPoints())
                 if inter.NbPoints()>0:
+                    # intersection : store value if it is inside or on the space boundary    
                     uvalue=elclib_Parameter(l,inter.Point(1))
                     if( (uvalue>=minu) & (uvalue<=maxu)):
                         uvalue2=elclib_Parameter(lin2d,inter.Point(1))
                         lin2d_values.append(uvalue2)
-                #else :
-                    # rare case of line joining two window parallel to another wall
-                    
                 
-                
-                # take only the intersection inside the surface
-
-            
-            # more intersection than just the two window mc
             intersection_points=[]
+            # a line inside the space will have at least 2 intersection( boundaries)
+            # more than 2 mean that it catch a boundary that not host the mc
             if len(lin2d_values)>2:
-                #print(lin2d_values)
                                         
                 lmax= elclib_Parameter(lin2d,mc12d)
                 lmin= elclib_Parameter(lin2d,mc22d)
-                #print(lmin,' ',lmax)
-                
-                #values_inter=[ v for v in lin2d_values if (v>lmax) | (v<lmin)]
                 
                 for v in lin2d_values:
                     #print(v) 
@@ -431,10 +427,11 @@ class space_ventilation_data:
                     # higher bound of the line    
                     if (pt2d.IsEqual(mc22d,1e-5)):
                         continue
-                    
+                    # outside of the boundaries
                     if( (v >= lmax) | (v<=lmin)):
                         continue
-                    #print("good v ") 
+                    
+                    # Point of intersection
                     pt3d= elclib_To3d(plane.Pln().Position().Ax2(),pt2d)
                     intersection_points.append(pt3d)
                     
@@ -444,21 +441,22 @@ class space_ventilation_data:
                 continue
             
                             
-            #no problem if no intersection 
+            #Looking for the vertices closest to the intersection point
+            # storing as a set to get unique value
             to_keep_idx=set()
             for p in intersection_points:
                 d=[v.Distance(p) for v in soil_pt]
                 to_keep_idx.add( d.index(min(d)))
             to_keep=[soil_pt[i] for i in to_keep_idx]    
-            
+            # creating a path
             path=[mc1]+to_keep+[mc2]
             length=0.0
+            # accumulatign the length along the path
             for p1,p2 in pairwise(path):
                 length+=p1.Distance(p2)
-                #print('lenth ',length ,' divided (must be >1) ', length/(half_diag))
                 length_between_mc[(win_id1,win_id2)]=length
         
-        
+        # stroring datas and exporting
         temp=list(length_between_mc.keys())
         win_id1 = [t[0] for t in temp]
         win_id2 = [t[1] for t in temp]
@@ -476,17 +474,7 @@ class space_ventilation_data:
         sweep_data=pd.DataFrame(data)
         self._sweep_data = sweep_data
         
-        print(sweep_data)
-        """
-        print(' Sweeping (must be >1) : ' )
-        for k,v in length_between_mc.items():
-            print('     ',k[0],' ',k[1],' ',v)
-        print(length_between_mc)
-        """
-        #self._sweeping_data=length_between_mc
-        
-        return sweep_data
-    
+   
       
     def info(self):
         print('Space Name ',self._space.Name)
@@ -576,7 +564,7 @@ class rtaa_ventilation_study:
         self._remove_elements(ids,types,'openings')    
                 
     def remove_overlapping_spaces(self):
-        """Not finished funtion, some space can have the same extrusion bases but 
+        """Not finished function, some space can have the same extrusion bases but 
         with different heigth
 
         Parameters
