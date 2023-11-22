@@ -586,7 +586,7 @@ class rtaa_ventilation_study:
         -------
         None
             
-        """         #print(self._space_elements)
+        """        
         sorted_el = dict(sorted(self._space_elements.items()))
         #print(sorted_el)
         shapes = [ ifcelement_as_solid(el) for el in sorted_el.values()]
