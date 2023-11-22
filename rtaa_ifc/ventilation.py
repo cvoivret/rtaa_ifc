@@ -567,6 +567,7 @@ class rtaa_ventilation_study:
     def set_porosite(self):
         # looking for RTAA pset
         # if not present, set to one for each window
+        pass
     
     def remove_overlapping_spaces(self):
         """Not finished function, some space can have the same extrusion bases but 
@@ -580,7 +581,7 @@ class rtaa_ventilation_study:
         -------
         None
             
-        """         #print(self._space_elements)
+        """        
         sorted_el = dict(sorted(self._space_elements.items()))
         #print(sorted_el)
         shapes = [ ifcelement_as_solid(el) for el in sorted_el.values()]
