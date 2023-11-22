@@ -4,7 +4,7 @@ from timezonefinder import TimezoneFinder
 import os
 import pandas as pd
 import numpy as np
-import sunposition as sunpos
+from .sunposition import sunpos
 
 from OCC.Core.gp import gp_Pnt,gp_Dir,gp_Vec,gp_Trsf,gp_Ax1
 from OCC.Core.BRep import BRep_Tool
@@ -293,7 +293,7 @@ class project_location:
         dr_proj = dtindex.tz_localize(self._tz)
         dr_proj_utc = dr_proj.tz_convert("UTC")
         
-        az_vec,zen_vec=sunpos.sunpos(dr_proj_utc,self._latitude,self._longitude,0)[:2]
+        az_vec,zen_vec=sunpos(dr_proj_utc,self._latitude,self._longitude,0)[:2]
         
         
         

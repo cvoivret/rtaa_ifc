@@ -60,10 +60,10 @@ window_spec.applicability.append(ids.Entity(name="IFCWINDOW"))
 
   
 porosity = ids.Property(
-    name='porosite',
+    name="porosite",
     propertySet="Pset_rtaadom_porosite",
-    datatype="IfcReal",
-    instructions="sdcsct",
+    datatype="Value",
+    #instructions="sdcsct",
     )
     
 window_spec.requirements.append(porosity)

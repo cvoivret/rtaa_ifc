@@ -1,18 +1,16 @@
-import geom
-import ifcopenshell
-from  project import project_location
 
 from collections import defaultdict
 from collections import Counter
 
 from itertools import compress,tee,combinations,product
 import numpy as np
+import scipy.integrate as spi
 import pandas as pd
 
+import ifcopenshell
 
-import scipy.integrate as spi
-
-from geom import   (
+from .project import project_location
+from .geom import   (
                     ifcelement_as_solid,
                     fuse_listOfShape,
                     shapes_as_solids,
@@ -23,8 +21,6 @@ from geom import   (
 
 from OCC.Display.SimpleGui import init_display
 from OCC.Core.Quantity import Quantity_Color,Quantity_TOC_RGB
-
-
 
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism,BRepPrimAPI_MakeCylinder

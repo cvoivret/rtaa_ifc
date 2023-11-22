@@ -7,8 +7,8 @@ import ifcopenshell
 from ifcopenshell.geom import create_shape
 
 
-from  project import project_location
-from geom import   (
+from .project import project_location
+from .geom import   (
                     ifcelement_as_solid,
                     fuse_listOfShape,
                     shapes_as_solids,
@@ -496,15 +496,20 @@ class rtaa_ventilation_study:
         setting=ifcopenshell.geom.settings()
         setting.set(setting.USE_PYTHON_OPENCASCADE, True)
         
-        self._workingdir = os.path.dirname(ifcfilename)
+        filedir = os.path.dirname(ifcfilename)
+        basename= os.path.splitext(os.path.basename(ifcfilename))[0]        
+        print('fileidr ',filedir)
+        print('base ', basename)
+        self._output_file= os.path.join( filedir,
+                                         basename+'__ventilation.xlsx')
+        print(' out ', self._output_file)
+        
         
         self._ifc_file= ifcopenshell.open(ifcfilename)
         
         self._space_elements=dict()
         self._opening_elements=dict()
-        
-        print(" ifc file ",self._ifc_file)
-        
+                        
         self._proj_loc=project_location()
         self._proj_loc.set_location_from_ifc(self._ifc_file)
         self._proj_loc.set_northing_from_ifc(self._ifc_file)
@@ -567,6 +572,7 @@ class rtaa_ventilation_study:
     def set_porosite(self):
         # looking for RTAA pset
         # if not present, set to one for each window
+        pass
     
     def remove_overlapping_spaces(self):
         """Not finished function, some space can have the same extrusion bases but 
@@ -709,8 +715,8 @@ class rtaa_ventilation_study:
         None
             
         """        
-        filename=os.path.join(self._workingdir,'ventilation_results.xlsx')
-        with pd.ExcelWriter(filename,mode='w') as writer:  
+        #filename=os.path.join(self._workingdir,'ventilation_results.xlsx')
+        with pd.ExcelWriter(self._output_file,mode='w') as writer:  
             
             lwin=[r._win_data for r in self._results if hasattr(r,'_win_data')]
             win=pd.DataFrame()

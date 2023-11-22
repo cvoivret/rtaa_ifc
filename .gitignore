@@ -1,4 +1,4 @@
 # cache results
 /rtaa_ifc/__pycache__
-/tests/data/ventilation_results.xlsx
+/tests/data/*ventilation.xlsx
 /tests/data/rtaa.ids
