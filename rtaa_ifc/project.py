@@ -12,6 +12,7 @@ from OCC.Core.Geom import Geom_Plane
         
 class project_location:
     def __init__(self):
+        
         pass
         
     def set_northing_from_ifc(self,ifc_file):

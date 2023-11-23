@@ -1,0 +1,77 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ids xmlns="http://standards.buildingsmart.org/IDS" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://standards.buildingsmart.org/IDS http://standards.buildingsmart.org/IDS/0.9.6/ids.xsd">
+    <info>
+        <title>RTAA DOM</title>
+        <copyright>Universite de la Reunion</copyright>
+        <version>0.0.1</version>
+        <description>Donnees necessaire a la verification automatique par le module xxx</description>
+        <author>voivret66@gmail.com</author>
+        <date>2022-01-01</date>
+    </info>
+    <specifications>
+        <specification name="Project Location" ifcVersion="IFC4" description="Localisation geographique valide du projet (lat,lon,elev)" instructions="Mettre à jour les coordonnées du projet (lat,lon,elev)" minOccurs="0" maxOccurs="unbounded">
+            <applicability>
+                <entity>
+                    <name>
+                        <simpleValue>IFCSITE</simpleValue>
+                    </name>
+                </entity>
+            </applicability>
+            <requirements>
+                <attribute instructions="Le createur du projet est responsable de la bonne localisation du batiment">
+                    <name>
+                        <simpleValue>RefLatitude</simpleValue>
+                    </name>
+                </attribute>
+                <attribute instructions="Le createur du projet est responsable de la bonne localisation du batiment">
+                    <name>
+                        <simpleValue>RefLongitude</simpleValue>
+                    </name>
+                </attribute>
+                <attribute instructions="Le createur du projet est responsable de la bonne localisation du batiment">
+                    <name>
+                        <simpleValue>RefElevation</simpleValue>
+                    </name>
+                </attribute>
+            </requirements>
+        </specification>
+        <specification name="Opening porosity" ifcVersion="IFC4" description="Existence la porosite" instructions="test" minOccurs="0" maxOccurs="unbounded">
+            <applicability>
+                <entity>
+                    <name>
+                        <simpleValue>IFCWINDOW</simpleValue>
+                    </name>
+                </entity>
+            </applicability>
+            <requirements>
+                <property datatype="IfcReal" maxOccurs="unbounded" minOccurs="1">
+                    <propertySet>
+                        <simpleValue>Pset_rtaadom_porosite</simpleValue>
+                    </propertySet>
+                    <name>
+                        <simpleValue>porosite</simpleValue>
+                    </name>
+                </property>
+            </requirements>
+        </specification>
+        <specification name="Opening porosity" ifcVersion="IFC4" description="Existence la porosite" instructions="test" minOccurs="0" maxOccurs="unbounded">
+            <applicability>
+                <entity>
+                    <name>
+                        <simpleValue>IFCDOOR</simpleValue>
+                    </name>
+                </entity>
+            </applicability>
+            <requirements>
+                <property datatype="IfcReal" maxOccurs="unbounded" instructions="sdcsct" minOccurs="1">
+                    <propertySet>
+                        <simpleValue>Pset_rtaadom_porosite</simpleValue>
+                    </propertySet>
+                    <name>
+                        <simpleValue>porosite</simpleValue>
+                    </name>
+                </property>
+            </requirements>
+        </specification>
+    </specifications>
+</ids>

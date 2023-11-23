@@ -8,6 +8,8 @@ from ifcopenshell.geom import create_shape
 
 
 from .project import project_location
+from .ids_rtaadom import check_ventilation_ids
+
 from .geom import   (
                     ifcelement_as_solid,
                     fuse_listOfShape,
@@ -494,9 +496,14 @@ class space_ventilation_data:
 class rtaa_ventilation_study:
     def __init__(self,ifcfilename):
         setting=ifcopenshell.geom.settings()
+        
+        check_ventilation_ids(ifcfilename)
+
         setting.set(setting.USE_PYTHON_OPENCASCADE, True)
         
         filedir = os.path.dirname(ifcfilename)
+        
+        
         basename= os.path.splitext(os.path.basename(ifcfilename))[0]        
         print('fileidr ',filedir)
         print('base ', basename)
@@ -776,7 +783,7 @@ class rtaa_ventilation_study:
         
 
 
-
+"""
 if __name__ == "__main__":
     
     filename = '../tests/data/DCE_CDV_BAT.ifc'
@@ -796,3 +803,4 @@ if __name__ == "__main__":
     rsv.set_geometries()
     rsv.run()
     rsv.display()
+"""

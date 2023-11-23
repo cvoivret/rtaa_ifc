@@ -7,9 +7,9 @@ import ifctester
 import ifctester.reporter
 from  ifctester import ids
 
-def rtaa_ids():
+def rtaa_solar_ids():
 
-    my_ids = ids.Ids(
+    rtaa_ids = ids.Ids(
         title="RTAA DOM",
         copyright="Universite de la Reunion",
         version="0.0.1",
@@ -18,7 +18,7 @@ def rtaa_ids():
         date="2022-01-01",
         #purpose="Contractual requirements",
         )
-
+    ### project location
     location_spec = ids.Specification(
         name="Project Location",
         minOccurs=0,
@@ -45,8 +45,13 @@ def rtaa_ids():
 
     location_spec.requirements.extend([latitude,longitude,altitude])
 
-    my_ids.specifications.append(location_spec)
+    rtaa_ids.specifications.append(location_spec)
 
+    return rtaa_ids
+    
+def rtaa_ventilation_ids():
+    
+    rtaa_ids = rtaa_solar_ids()
 
     ### window
     window_spec = ids.Specification(
@@ -69,10 +74,10 @@ def rtaa_ids():
         
     window_spec.requirements.append(porosity)
 
-    my_ids.specifications.append(window_spec)
+    rtaa_ids.specifications.append(window_spec)
 
 
-
+    ### door
     door_spec = ids.Specification(
         name="Opening porosity",
         minOccurs=0,
@@ -92,28 +97,26 @@ def rtaa_ids():
         )
     door_spec.requirements.append(porosity)
 
-    my_ids.specifications.append(door_spec)
+    rtaa_ids.specifications.append(door_spec)
     
-    return my_ids
+    return rtaa_ids
 
 
-if __name__ == "__main__":
-    
-    
-    
-    filepath =  'test_pset.ifc'
-    ifc=ifcopenshell.open(filepath)
-    
-    my_ids=rtaa_ids()
-    my_ids.validate(ifc)
-    #result = my_ids.to_xml('../tests/data/rtaa.ids')
-    
-    engine = ifctester.reporter.Console(my_ids)
+def check_solar_ids(ifc):
+    rtaa_ids=rtaa_solar_ids()
+    rtaa_ids.validate(ifc)
+    engine = ifctester.reporter.Console(rtaa_ids)
     engine.report()
-    #engine.to_file('./')
-    #print( engine.to_string())
-
-
+    
+    return 
+    
+def check_ventilation_ids(ifc):
+    rtaa_ids=rtaa_ventilation_ids()
+    rtaa_ids.validate(ifc)
+    engine = ifctester.reporter.Console(rtaa_ids)
+    engine.report()
+    
+    return 
 
 
 

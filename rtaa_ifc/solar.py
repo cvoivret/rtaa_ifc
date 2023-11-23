@@ -10,6 +10,7 @@ import pandas as pd
 import ifcopenshell
 
 from .project import project_location
+from .ids_rtaadom import check_solar_ids
 from .geom import   (
                     ifcelement_as_solid,
                     fuse_listOfShape,
@@ -937,6 +938,15 @@ class rtaa_solar_study:
     def __init__(self,ifcfilename):
         
         self._ifc_file= ifcopenshell.open(ifcfilename)
+        
+        # file validation with IDS
+        status = check_solar_ids(ifcfilename)
+        #print("STATUS ",status)
+        #result = rtaa_ids.to_xml('../tests/data/rtaa.ids')
+    
+        #engine = ifctester.reporter.Console(rtaa_ids)
+        #engine.report()
+        
         self._solar_elements=dict()
         self._building_elements=dict()
         print(" ifc file ",self._ifc_file)
@@ -1179,7 +1189,7 @@ class rtaa_solar_study:
         return { id : r._cm for id,r in self._results.items()} 
         
     
-        
+"""        
 if __name__ == "__main__":
 
     
@@ -1190,3 +1200,4 @@ if __name__ == "__main__":
     rss.add_solar_elements([],['IfcWindow'])
     rss.set_geometries()
     rss.run()
+"""
