@@ -31,7 +31,7 @@ from OCC.Core.gp import gp_Dir2d,gp_Vec2d,gp_Lin2d
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
 from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut,BRepAlgoAPI_Fuse
-from OCC.Core.BRepGProp import brepgprop_SurfaceProperties,brepgprop_VolumeProperties
+from OCC.Core.BRepGProp import brepgprop#brepgprop_SurfaceProperties,brepgprop_VolumeProperties
 from OCC.Core.GProp import GProp_GProps
 
 from OCC.Core.Geom import Geom_Plane
@@ -40,9 +40,9 @@ from OCC.Core.GeomAPI import GeomAPI_ProjectPointOnSurf
 from OCC.Core.Geom2dAPI import Geom2dAPI_InterCurveCurve
 from OCC.Core.Geom2d import Geom2d_Line
 
-from OCC.Core.ProjLib import projlib_Project
+from OCC.Core.ProjLib import projlib
 
-from OCC.Core.ElCLib import elclib_Parameter,elclib_To3d,elclib_Value
+from OCC.Core.ElCLib import elclib # Parameter,elclib_To3d,elclib_Value
 from OCC.Extend.TopologyUtils import TopologyExplorer
 
 
@@ -250,7 +250,7 @@ class space_ventilation_data:
             angles=[]
             orient=[]
             for f in f_list:
-                brepgprop_SurfaceProperties(f,gpp)
+                brepgprop.SurfaceProperties(f,gpp)
                 wall_area[wall_id].append(gpp.Mass())
                 # since walls are generealy straight, should 
                 # contain unique value
@@ -273,7 +273,7 @@ class space_ventilation_data:
         for win_id,f_list in self._win_faces.items():
             win_rtaa_poro[win_id]=1.0
             for f in f_list: 
-                brepgprop_SurfaceProperties(f,gpp)
+                brepgprop.SurfaceProperties(f,gpp)
                 win_area[win_id].append(gpp.Mass())
             win_area_total[win_id]= sum(win_area[win_id]) 
             
@@ -355,14 +355,14 @@ class space_ventilation_data:
         for e in edges:
             (curve,minu,maxu)=BRep_Tool.Curve(e)
             adapt=GeomAdaptor_Curve(curve)
-            llines_face.append( (projlib_Project(plane.Pln(),adapt.Line()),minu,maxu))
+            llines_face.append( (projlib.Project(plane.Pln(),adapt.Line()),minu,maxu))
         
         # convert vertices to points            
         vertices=list(TopologyExplorer(self._soil_face).vertices())
         soil_pt=[BRep_Tool.Pnt(v) for v in vertices]
         
         # computation of an approximated diagonal length
-        brepgprop_SurfaceProperties(self._soil_face,gpp)
+        brepgprop.SurfaceProperties(self._soil_face,gpp)
         mc_soil=gpp.CentreOfMass()
         #distance from the mass center is already a proxy for half diag
         half_diag = sum([mc_soil.Distance(p) for p in soil_pt])/len(soil_pt)
@@ -375,7 +375,7 @@ class space_ventilation_data:
             srf_wall=BRep_Tool().Surface(self._wall_faces[wall_id][0])
             
             for win_id in win_ids:
-                brepgprop_VolumeProperties(windows_shapes[win_id],gpp)
+                brepgprop.VolumeProperties(windows_shapes[win_id],gpp)
                 mc=gpp.CentreOfMass()
                 # projection of the mc on the face such that it is exactly
                 # over the line of the contour
@@ -388,8 +388,8 @@ class space_ventilation_data:
             mc2=mass_centers[win_id2]
                             
             # projection of mass centers on the soil plane
-            mc12d = projlib_Project(plane.Pln(),mc1)
-            mc22d = projlib_Project(plane.Pln(),mc2)
+            mc12d = projlib.Project(plane.Pln(),mc1)
+            mc22d = projlib.Project(plane.Pln(),mc2)
             between_vec = gp_Vec2d(mc22d,mc12d).Normalized()
             # line joigning the two projected mass center
             lin2d=gp_Lin2d( mc12d, gp_Dir2d(between_vec))
@@ -404,9 +404,9 @@ class space_ventilation_data:
                 #print(" number of intersections ",inter.NbPoints())
                 if inter.NbPoints()>0:
                     # intersection : store value if it is inside or on the space boundary    
-                    uvalue=elclib_Parameter(l,inter.Point(1))
+                    uvalue=elclib.Parameter(l,inter.Point(1))
                     if( (uvalue>=minu) & (uvalue<=maxu)):
-                        uvalue2=elclib_Parameter(lin2d,inter.Point(1))
+                        uvalue2=elclib.Parameter(lin2d,inter.Point(1))
                         lin2d_values.append(uvalue2)
                 
             intersection_points=[]
@@ -414,12 +414,12 @@ class space_ventilation_data:
             # more than 2 mean that it catch a boundary that not host the mc
             if len(lin2d_values)>2:
                                         
-                lmax= elclib_Parameter(lin2d,mc12d)
-                lmin= elclib_Parameter(lin2d,mc22d)
+                lmax= elclib.Parameter(lin2d,mc12d)
+                lmin= elclib.Parameter(lin2d,mc22d)
                 
                 for v in lin2d_values:
                     #print(v) 
-                    pt2d= elclib_Value(v,lin2d)
+                    pt2d= elclib.Value(v,lin2d)
                     
                     # lower bound of the line                            
                     if (pt2d.IsEqual(mc12d,1e-5)) :
@@ -432,7 +432,7 @@ class space_ventilation_data:
                         continue
                     
                     # Point of intersection
-                    pt3d= elclib_To3d(plane.Pln().Position().Ax2(),pt2d)
+                    pt3d= elclib.To3d(plane.Pln().Position().Ax2(),pt2d)
                     intersection_points.append(pt3d)
                     
         

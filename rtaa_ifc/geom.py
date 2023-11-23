@@ -13,16 +13,16 @@ from OCC.Core.BRep import BRep_Tool
 
 from OCC.Core.TopoDS import TopoDS_Face
 from OCC.Core.TopTools import TopTools_ListOfShape,TopTools_IndexedMapOfShape
-from OCC.Core.TopExp import topexp_MapShapes
+from OCC.Core.TopExp import topexp 
 from OCC.Core.TopAbs import TopAbs_SOLID,TopAbs_FACE,TopAbs_SHELL,TopAbs_WIRE
 import OCC.Core.ShapeFix as ShapeFix_Shape
 from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCC.Core.BOPAlgo import BOPAlgo_BOP,BOPAlgo_Operation
-from OCC.Core.BOPTools import BOPTools_AlgoTools_OrientFacesOnShell
+from OCC.Core.BOPTools import BOPTools_AlgoTools
 
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.GeomLProp import GeomLProp_SLProps
-from OCC.Core.BRepGProp import brepgprop_SurfaceProperties,brepgprop_VolumeProperties,brepgprop_LinearProperties
+from OCC.Core.BRepGProp import brepgprop #SurfaceProperties,VolumeProperties
 from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Sewing,BRepBuilderAPI_MakeSolid,BRepBuilderAPI_MakeFace
 #from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Copy,BRepBuilderAPI_Transform
 from OCC.Core.Geom import Geom_Plane
@@ -65,12 +65,12 @@ def shapes_as_solids(lshape):
     maps=TopTools_IndexedMapOfShape()
     for s in lshape:
         maps.Clear()
-        topexp_MapShapes(s,TopAbs_SOLID,maps)
+        topexp.MapShapes(s,TopAbs_SOLID,maps)
         if(maps.Size()>0):
             lsolid.extend([maps.FindKey(i) for i in range(1,maps.Size()+1)])
         else:
             maps.Clear()
-            topexp_MapShapes(s,TopAbs_FACE,maps)
+            topexp.MapShapes(s,TopAbs_FACE,maps)
             sewer=BRepBuilderAPI_Sewing()
             [sewer.Add(maps.FindKey(i)) for i in range(1,maps.Size()+1)]
             sewer.Perform()
@@ -149,7 +149,7 @@ def get_external_shell(lshape):
     common.Perform()
     commonshell=common.Shape()
     
-    BOPTools_AlgoTools_OrientFacesOnShell(commonshell)
+    BOPTools_AlgoTools.OrientFacesOnShell(commonshell)
     
     shu=ShapeUpgrade_UnifySameDomain(commonshell)
     shu.Build()
@@ -197,7 +197,7 @@ def exterior_wall_normal_and_plane(wall_shape,external_shell):
             face_norm_coord=fn.Coord()
             # maybe necessary to round...
             face_norm_coord = tuple(round(c,10) for c in face_norm_coord)
-            brepgprop_SurfaceProperties(f,gpp)
+            brepgprop.SurfaceProperties(f,gpp)
             norm_area[face_norm_coord]+=gpp.Mass()
             norm_map[face_norm_coord].append(f)
         #print(norm_map)
@@ -244,7 +244,7 @@ def biggestface_along_vector(shape,vector,tol=1e-6,ratio=0.9):
         if(face_norm.IsEqual(vector,tol)):
             #print(" face2 ",win_norm.Coord())
            
-            brepgprop_SurfaceProperties(f,gpp)
+            brepgprop.SurfaceProperties(f,gpp)
             #print(" area ", gpp.Mass())
             facearea.append(round(gpp.Mass(),5))
             facelist.append(f)

@@ -24,7 +24,7 @@ from OCC.Core.Quantity import Quantity_Color,Quantity_TOC_RGB
 
 from OCC.Core.BRep import BRep_Tool
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism,BRepPrimAPI_MakeCylinder
-from OCC.Core.BRepGProp import brepgprop_SurfaceProperties,brepgprop_VolumeProperties
+from OCC.Core.BRepGProp import brepgprop #_SurfaceProperties,brepgprop_VolumeProperties
 from OCC.Core.BRepBuilderAPI import (
                                     BRepBuilderAPI_Copy,
                                     BRepBuilderAPI_Transform,
@@ -32,7 +32,7 @@ from OCC.Core.BRepBuilderAPI import (
                                     )
 from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
-from OCC.Core.BRepTools import breptools_UVBounds
+from OCC.Core.BRepTools import breptools
 
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.GeomLProp import GeomLProp_SLProps
@@ -88,7 +88,7 @@ def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm):
         return theface
     
     gpp=GProp_GProps()
-    brepgprop_SurfaceProperties(theface,gpp)
+    brepgprop.SurfaceProperties(theface,gpp)
     gf_area=gpp.Mass()
     
     ext_vec=gp_Vec(sun_dir)
@@ -147,7 +147,7 @@ def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm):
     # flux trough the face of interest
     # we will compare this flux and the fluw trough 
     # each face of the intersetion to filter 
-    brepgprop_SurfaceProperties(theface,gpp)
+    brepgprop.SurfaceProperties(theface,gpp)
     theface_area=gpp.Mass()
     theface_flux=theface_norm.Dot(sun_dir)*theface_area
     
@@ -187,7 +187,7 @@ def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm):
         
         # normal computation
         srf3 = BRep_Tool().Surface(ff)
-        umin,umax,vmin,vmax=breptools_UVBounds(ff)
+        umin,umax,vmin,vmax=breptools.UVBounds(ff)
         props=GeomLProp_SLProps(srf3,0.5*(umax-umin),0.5*(vmax-vmin),1,0.001)
         fn=props.Normal()
         if(ff.Orientation()==1):
@@ -196,7 +196,7 @@ def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm):
         # avoid face nearly parallel with extrusion generatrix
         # ie face with normal perpendicular with extrusion direction
         if(fn.Dot(sun_dir)<-1e-5):
-            brepgprop_SurfaceProperties(ff,gpp)
+            brepgprop.SurfaceProperties(ff,gpp)
             larea.append(gpp.Mass())
             faceflux = larea[-1]*fn.Dot(sun_dir)
            
@@ -544,14 +544,14 @@ class direct_mask_on_face:
         gpp=GProp_GProps()
         l=[]
         for f in self._mask_faces:
-            brepgprop_SurfaceProperties(f,gpp)
+            brepgprop.SurfaceProperties(f,gpp)
             l.append(gpp.Mass())
         
         self._mask_area=np.array(l)
         
     def face_area(self):
         gpp=GProp_GProps()
-        brepgprop_SurfaceProperties(self._face,gpp)
+        brepgprop.SurfaceProperties(self._face,gpp)
         self._face_area=gpp.Mass()
         
     def mask_ratio(self):
@@ -753,7 +753,7 @@ class rtaa_on_faces:
             if(f.Orientation()==1):
                 face_norm.Reverse()
             norm=gp_Vec(face_norm)
-            brepgprop_SurfaceProperties(f,gpp)
+            brepgprop.SurfaceProperties(f,gpp)
             mc=gpp.CentreOfMass()
             display.DisplayVector(norm,mc)
         
@@ -1129,7 +1129,7 @@ class rtaa_solar_study:
             for f in facelist:
                 display.DisplayShape(f,color='RED',transparency=0.1)
                 
-                brepgprop_SurfaceProperties(f,gpp)
+                brepgprop.SurfaceProperties(f,gpp)
                 mc=gpp.CentreOfMass()
                 display.DisplayVector(norm,mc)
         
