@@ -11,10 +11,11 @@ from collections import Counter
 
 from OCC.Core.BRep import BRep_Tool
 
-from OCC.Core.TopoDS import TopoDS_Face
+from OCC.Core.TopoDS import TopoDS_Face,TopoDS_Shape
 from OCC.Core.TopTools import TopTools_ListOfShape,TopTools_IndexedMapOfShape
-from OCC.Core.TopExp import topexp 
-from OCC.Core.TopAbs import TopAbs_SOLID,TopAbs_FACE,TopAbs_SHELL,TopAbs_WIRE
+from OCC.Core.TopExp import topexp,TopExp_Explorer 
+from OCC.Core.ShapeExtend import ShapeExtend_Explorer
+from OCC.Core.TopAbs import TopAbs_SOLID,TopAbs_FACE,TopAbs_SHELL,TopAbs_WIRE,TopAbs_SHAPE 
 import OCC.Core.ShapeFix as ShapeFix_Shape
 from OCC.Core.ShapeUpgrade import ShapeUpgrade_UnifySameDomain
 from OCC.Core.BOPAlgo import BOPAlgo_BOP,BOPAlgo_Operation
@@ -34,6 +35,38 @@ from OCC.Core.BRepBndLib import brepbndlib
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox#,BRepPrimAPI_MakePrism,BRepPrimAPI_MakeHalfSpace,BRepPrimAPI_MakeSphere,BRepPrimAPI_MakeCylinder
 from OCC.Extend.TopologyUtils import TopologyExplorer#, WireExplorer,TopoDS_Iterator
 
+
+def face_mesh_triangle(comp=TopoDS_Shape(), isR=0.1, thA=0.1):
+    # Mesh the shape
+    BRepMesh_IncrementalMesh(comp, isR, True, thA, True)
+    bild1 = BRep_Builder()
+    comp1 = TopoDS_Compound()
+    bild1.MakeCompound(comp1)
+    bt = BRep_Tool()
+    ex = TopExp_Explorer(comp, TopAbs_FACE)
+    while ex.More():
+        face = topods_Face(ex.Current())
+        location = TopLoc_Location()
+        facing = bt.Triangulation(face, location)
+        tab = facing.Nodes()
+        tri = facing.Triangles()
+        print(facing.NbTriangles(), facing.NbNodes())
+        for i in range(1, facing.NbTriangles() + 1):
+            trian = tri.Value(i)
+            index1, index2, index3 = trian.Get()
+            for j in range(1, 4):
+                if j == 1:
+                    m = index1
+                    n = index2
+                elif j == 2:
+                    n = index3
+                elif j == 3:
+                    m = index2
+                me = BRepBuilderAPI_MakeEdge(tab.Value(m), tab.Value(n))
+                if me.IsDone():
+                    bild1.Add(comp1, me.Edge())
+        ex.Next()
+    return comp1
     
 def fuse_listOfShape(los,FuzzyValue=1e-6):
     """
@@ -52,6 +85,46 @@ def fuse_listOfShape(los,FuzzyValue=1e-6):
     fuser.Perform()
     return fuser.Shape()
 
+# try to convert a shape in a list of solid 
+# if needed decomposing a compound
+# make a solid from a list of faces
+# handle compound (hopefully with solid) and a faces as shell
+
+def solids_from_shape(shape):
+    lsolid=[]
+    print(' solids_from_shape ----',shape) 
+    maps=TopTools_IndexedMapOfShape()
+    topexp.MapShapes(shape,TopAbs_SOLID,maps)
+    # extract solids
+    maps.Clear()
+    if(maps.Size()>0):
+        #print('number of solids ', maps.Size())
+        lsolid.extend([maps.FindKey(i) for i in range(1,maps.Size()+1)])
+    # extract faces ans sew them
+    else:
+        maps.Clear()
+        topexp.MapShapes(shape,TopAbs_FACE,maps)
+        if( maps.Size()>0):
+            sewer=BRepBuilderAPI_Sewing()
+            [sewer.Add(maps.FindKey(i)) for i in range(1,maps.Size()+1)]
+            sewer.Perform()
+            sewed=sewer.SewedShape()
+            if(sewed.ShapeType()==0):
+                lshell=list(yield_subshapes(sewed))
+                for shell in lshell:
+                    lsolid.append(BRepBuilderAPI_MakeSolid(shell).Solid())
+            else:
+                solid=BRepBuilderAPI_MakeSolid(sewed).Solid()
+                lsolid.append(solid)
+    lsolid2=[]            
+    for s in lsolid:
+        fixer=ShapeFix_Shape.ShapeFix_Shape(s)
+        fixer.Perform()
+        lsolid2.append(fixer.Shape())
+         
+    return lsolid2
+
+
 def shapes_as_solids(lshape):
     """
     Try to build a list of solid from a list to shapes.
@@ -61,16 +134,29 @@ def shapes_as_solids(lshape):
     
     """
     lsolid=[]
-     
+    print(' shape as solid ----',lshape) 
     maps=TopTools_IndexedMapOfShape()
     for s in lshape:
+        #print(' shape ',s)
         maps.Clear()
         topexp.MapShapes(s,TopAbs_SOLID,maps)
+        se=ShapeExtend_Explorer()
+        lsh=se.SeqFromCompound(s,True)
+        #print(lsh)
+        
+        #print('list of shapes --- ')
+        #for i in  range(1,lsh.Length()+1):
+        #    print('shape ', lsh.Value(i))
+        
         if(maps.Size()>0):
+            #print('number of solids ', maps.Size())
             lsolid.extend([maps.FindKey(i) for i in range(1,maps.Size()+1)])
         else:
             maps.Clear()
             topexp.MapShapes(s,TopAbs_FACE,maps)
+            if( maps.Size()==0):
+                continue
+            #print(maps.Size())
             sewer=BRepBuilderAPI_Sewing()
             [sewer.Add(maps.FindKey(i)) for i in range(1,maps.Size()+1)]
             sewer.Perform()
@@ -90,8 +176,51 @@ def shapes_as_solids(lshape):
         lsolid2.append(fixer.Shape())
          
     return lsolid2
-
-
+def ifcelement_as_solid_old(element):
+    if element.Representation is None:
+        return None
+    shape=create_shape(setting, element).geometry
+    print('\n ifc shape ',shape)
+    solids=shapes_as_solids([shape])
+    print('list of solids ',solids)
+    solid=None
+    if( len(solids)==1):
+        solid = solids[0]
+    else :
+        solid = fuse_listOfShape(solids)
+    print('solid after fuse: ',solid)
+    if (solid is not None ) :
+        shu=ShapeUpgrade_UnifySameDomain(solid)
+        shu.Build()
+        solid=shu.Shape()    
+    #print(solid)
+    
+    # add unifiysamedomain ?
+    
+    return solid
+    
+def ifcelement_as_solid(element):
+    if element.Representation is None:
+        return None
+        
+    shape=create_shape(setting, element).geometry
+    
+    solids=solids_from_shape(shape)
+    solid=None
+    if( len(solids)==1):
+        solid = solids[0]
+    else :
+        solid = fuse_listOfShape(solids)
+        
+    print('solid after fuse: ',solid)
+    
+    if (solid is not None ) :
+        shu=ShapeUpgrade_UnifySameDomain(solid)
+        shu.Build()
+        solid=shu.Shape()    
+    
+    return solid
+  
 
 def get_external_shell(lshape):
     """
@@ -283,25 +412,6 @@ def biggestface_along_vector(shape,vector,tol=1e-6,ratio=0.9):
 
 
     
-def ifcelement_as_solid(element):
-    if element.Representation is None:
-        return None
-    shape=create_shape(setting, element).geometry
-    #print(shape)
-    solids=shapes_as_solids([shape])
-    #print(solids)
-    solid=None
-    if( len(solids)==1):
-        solid = solids[0]
-    else :
-        solid = fuse_listOfShape(solids)
+  
     
-    shu=ShapeUpgrade_UnifySameDomain(solid)
-    shu.Build()
-    solid=shu.Shape()    
-    #print(solid)
-    
-    # add unifiysamedomain ?
-    
-    return solid
  

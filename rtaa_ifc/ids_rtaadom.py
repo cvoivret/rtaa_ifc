@@ -1,7 +1,7 @@
 import ifcopenshell
 import sys
 
-sys.path.append('../../IfcOpenshell/src/ifctester')
+sys.path.append('C:/Users/cvoivret/source/IfcOpenshell/src/ifctester')
 
 import ifctester
 import ifctester.reporter

@@ -6,6 +6,8 @@ from itertools import compress,tee,combinations,product
 import numpy as np
 import scipy.integrate as spi
 import pandas as pd
+import sys
+
 
 import ifcopenshell
 
@@ -15,6 +17,7 @@ from .geom import   (
                     ifcelement_as_solid,
                     fuse_listOfShape,
                     shapes_as_solids,
+                    solids_from_shape,
                     get_external_shell,
                     exterior_wall_normal_and_plane,
                     biggestface_along_vector
@@ -23,7 +26,7 @@ from .geom import   (
 from OCC.Display.SimpleGui import init_display
 from OCC.Core.Quantity import Quantity_Color,Quantity_TOC_RGB
 
-from OCC.Core.BRep import BRep_Tool
+from OCC.Core.BRep import BRep_Tool,BRep_Builder
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism,BRepPrimAPI_MakeCylinder
 from OCC.Core.BRepGProp import brepgprop #_SurfaceProperties,brepgprop_VolumeProperties
 from OCC.Core.BRepBuilderAPI import (
@@ -33,7 +36,8 @@ from OCC.Core.BRepBuilderAPI import (
                                     )
 from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface
-from OCC.Core.BRepTools import breptools
+from OCC.Core.BRepTools import breptools,breptools_UVBounds
+from OCC.Core.BRepMesh import BRepMesh_IncrementalMesh
 
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.GeomLProp import GeomLProp_SLProps
@@ -51,12 +55,13 @@ from OCC.Core.gp import (
 
 
 from OCC.Core.Geom import Geom_Plane
-
-from OCC.Core.TopoDS import TopoDS_Face
+from OCC.Core.TopoDS import TopoDS_Shape, TopoDS_Compound, TopoDS_Face, topods_Face, topods_Solid
+from OCC.Core.TopoDS import TopoDS_Face,TopoDS_Compound,topods
 from OCC.Core.TopTools import TopTools_ListOfShape,TopTools_IndexedMapOfShape
-from OCC.Core.TopExp import topexp_MapShapes
+from OCC.Core.TopExp import topexp_MapShapes,topexp
 from OCC.Core.TopAbs import TopAbs_FACE
 
+from OCC.Core.TopExp import TopExp_Explorer
 from OCC.Extend.TopologyUtils import TopologyExplorer
  
 from OCC.Core.BOPAlgo import BOPAlgo_BOP,BOPAlgo_Operation
@@ -160,10 +165,49 @@ def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm):
         adapt=BRepAdaptor_Surface(ff)
         # normal of cylinder faces is not unique
         # dirty trick to extract fraction of cylinder face that 
-        # can cas shadows
+        # can cast shadows
+        
+        
         if adapt.GetType()==1:
+            #print('cylinder')
+            """
+            mesh = BRepMesh_IncrementalMesh(ff,0.01)
+            mesh.Perform()
+            bild1 = BRep_Builder()
+            comp1 = TopoDS_Compound()
+            bild1.MakeCompound(comp1)
+            bt = BRep_Tool()
+            ex = TopExp_Explorer(ff, TopAbs_FACE)
+            
+            while ex.More():
+                face = topods_Face(ex.Current())
+                location = TopLoc_Location()
+                facing = bt.Triangulation(face, location)
+                tab = facing.Nodes()
+                tri = facing.Triangles()
+                print(facing.NbTriangles(), facing.NbNodes())
+                for i in range(1, facing.NbTriangles() + 1):
+                    trian = tri.Value(i)
+                    index1, index2, index3 = trian.Get()
+                    for j in range(1, 4):
+                        if j == 1:
+                            m = index1
+                            n = index2
+                        elif j == 2:
+                            n = index3
+                        elif j == 3:
+                            m = index2
+                        me = BRepBuilderAPI_MakeEdge(tab.Value(m), tab.Value(n))
+                        if me.IsDone():
+                            bild1.Add(comp1, me.Edge())
+                ex.Next()
+            print(comp1)    
+            #print(breptools.Triangulated(ff,0.011))
+            
+            cdc
+            """
             cyl=adapt.Cylinder()
-            umin,umax,vmin,vmax=breptools_UVBounds(ff)
+            umin,umax,vmin,vmax=breptools.UVBounds(ff)
             if vmin<0.0:
                 cyl.VReverse()
             
@@ -179,7 +223,7 @@ def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm):
             shape=com.Shape()
             #lcyl.append(shape)
             maps=TopTools_IndexedMapOfShape()
-            topexp_MapShapes(shape,TopAbs_FACE,maps)
+            topexp.MapShapes(shape,TopAbs_FACE,maps)
             lfacetokeep=[maps.FindKey(i) for i in range(1,maps.Size()+1)]
             if( len(lfacetokeep)==1):
                 ff=lfacetokeep[0]
@@ -207,6 +251,9 @@ def compute_direct_mask_on_face(sun_dir,mybuilding,myface,theface_norm):
     
     # extrusion of selected faces
     lsolid=[ BRepPrimAPI_MakePrism(s,ext_vec,False,True).Shape() for s in lfaces]
+    
+    
+    
     
     # void face with zero area
     if(len(lsolid)==0):
@@ -494,7 +541,9 @@ class direct_mask_on_face:
            
             mask_face=compute_direct_mask_on_face(sun_dir,exposed_building,self._face,face_norm)
             
-            print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
+            #print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
+            print('     sun dir ',j,'/',len(self._lsun_dir)-1)#,end="",flush=True)
+
             self._mask_faces.append(mask_face)
         
     def display(self,exposed_building):
@@ -635,7 +684,7 @@ class rtaa_on_faces:
         intersector.AddTool(extrusion) 
         intersector.AddArgument(self._exposed_building)
         intersector.Perform()
-        return shapes_as_solids([intersector.Shape()])[0]
+        return solids_from_shape(intersector.Shape())[0]
     
     def adjust_face_to_wall_plane(self,input_face):
         """Translate the input face to be coplanar with the external 
@@ -1072,22 +1121,40 @@ class rtaa_solar_study:
         None
             
         """
-        building_shapes = { x.id():ifcelement_as_solid(x) 
-                            for x in self._building_elements.values() }
+        # get spaces geometries
+        ifcspaces=self._ifc_file.by_type('IfcSpace')
+        if len(ifcspaces)==0:
+            #print('   No spaces found :: Exit ')
+            sys.exit("No spaces found")
+        # list of boolean
+        in_building=[ space.id() not in list(self._building_elements.keys()) for space in ifcspaces]
+        # space in building
+        space_shapes = [ifcelement_as_solid(x) for x in compress(ifcspaces,in_building) ]
+        
+        
+        
+        
+        
+        building_shapes={}
+        for x in self._building_elements.values():
+            s=ifcelement_as_solid(x)
+            if s !=None:
+                building_shapes[x.id()]=s
+                
+            
         
         self._building= fuse_listOfShape(list(building_shapes.values()))
         
         # # Compute the external shell of the building
         # # Fill the wall building with the spaces as solid
         
-        # get spaces geometries
-        ifcspaces=self._ifc_file.by_type('IfcSpace')
-        # list of boolean
-        in_building=[ space.id() not in list(self._building_elements.keys()) for space in ifcspaces]
-        # space in building
-        space_shapes = [ifcelement_as_solid(x) for x in compress(ifcspaces,in_building) ]
         # making list of solids
-        solids=shapes_as_solids([self._building]+space_shapes)
+        solids=[]
+        source = [self._building]+space_shapes
+        for s in source:
+            solids.extend( solids_from_shape(s))
+            
+        #solids=shapes_as_solids([self._building]+space_shapes)
         
         # compute the external shell
         self._external_shell = get_external_shell(solids)
@@ -1120,7 +1187,7 @@ class rtaa_solar_study:
         x=50/256
         gray=rgb_color(x, x, x)
     
-        display, start_display, add_menu, add_function_to_menu = init_display()
+        display, start_display, add_menu, add_function_to_menu = init_display('pyqt5')
     
         display.DisplayShape(self._building,color=gray,transparency=0.5)
         
