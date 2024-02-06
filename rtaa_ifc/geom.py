@@ -92,7 +92,7 @@ def fuse_listOfShape(los,FuzzyValue=1e-6):
 
 def solids_from_shape(shape):
     lsolid=[]
-    print(' solids_from_shape ----',shape) 
+    #print(' solids_from_shape ----',shape) 
     maps=TopTools_IndexedMapOfShape()
     topexp.MapShapes(shape,TopAbs_SOLID,maps)
     # extract solids
@@ -134,7 +134,7 @@ def shapes_as_solids(lshape):
     
     """
     lsolid=[]
-    print(' shape as solid ----',lshape) 
+    #print(' shape as solid ----',lshape) 
     maps=TopTools_IndexedMapOfShape()
     for s in lshape:
         #print(' shape ',s)
@@ -176,6 +176,7 @@ def shapes_as_solids(lshape):
         lsolid2.append(fixer.Shape())
          
     return lsolid2
+    
 def ifcelement_as_solid_old(element):
     if element.Representation is None:
         return None
@@ -188,7 +189,7 @@ def ifcelement_as_solid_old(element):
         solid = solids[0]
     else :
         solid = fuse_listOfShape(solids)
-    print('solid after fuse: ',solid)
+    #print('solid after fuse: ',solid)
     if (solid is not None ) :
         shu=ShapeUpgrade_UnifySameDomain(solid)
         shu.Build()
@@ -212,7 +213,7 @@ def ifcelement_as_solid(element):
     else :
         solid = fuse_listOfShape(solids)
         
-    print('solid after fuse: ',solid)
+    #print('solid after fuse: ',solid)
     
     if (solid is not None ) :
         shu=ShapeUpgrade_UnifySameDomain(solid)

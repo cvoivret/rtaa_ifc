@@ -11,7 +11,7 @@ import sys
 
 import ifcopenshell
 
-from .project import project_location
+from .project import project_location,building_geoloc,rtaa_sun_data
 from .ids_rtaadom import check_solar_ids
 from .geom import   (
                     ifcelement_as_solid,
@@ -541,8 +541,8 @@ class direct_mask_on_face:
            
             mask_face=compute_direct_mask_on_face(sun_dir,exposed_building,self._face,face_norm)
             
-            #print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
-            print('     sun dir ',j,'/',len(self._lsun_dir)-1)#,end="",flush=True)
+            print('\r     sun dir ',j,'/',len(self._lsun_dir)-1,end="",flush=True)
+            #print('     sun dir ',j,'/',len(self._lsun_dir)-1)#,end="",flush=True)
 
             self._mask_faces.append(mask_face)
         
@@ -978,6 +978,7 @@ class rtaa_on_faces:
         self._cm= total_m_irr/total_irr
 
 
+
     
 class rtaa_solar_study:
     """The object that manage the data to compute shading factor on
@@ -1000,10 +1001,17 @@ class rtaa_solar_study:
         self._building_elements=dict()
         print(" ifc file ",self._ifc_file)
         
+        self._geoloc = building_geoloc()
+        self._geoloc.set_from_ifc(self._ifc_file)
+        
+        self._sun_data=rtaa_sun_data(self._geoloc._dom,self._geoloc._tn_angle)
+        
+        """
         self._proj_loc=project_location()
         self._proj_loc.set_location_from_ifc(self._ifc_file)
         self._proj_loc.set_northing_from_ifc(self._ifc_file)
         self._proj_loc.load_irradiance()
+        """
     
         
     def _add_elements(self,ids=[],ltypes=[],container=None):
@@ -1241,7 +1249,11 @@ class rtaa_solar_study:
             idhost = self._hosting_solar_id[id] 
             norm,plane =self._wall_norm_plane[idhost]
             
-            sun_to_earth_project,irradiance=self._proj_loc.data_critical_period_day(facelist[0])
+            #sun_to_earth_project,irradiance=self._proj_loc.data_critical_period_day(facelist[0])
+            
+            norm_tn=self._geoloc.face_normal_to_tn(facelist[0])
+            sun_to_earth_project,irradiance=self._sun_data.sun_data(norm_tn)
+
             
             print(" Opening ID  : ", id)
             rtaa=rtaa_on_faces(facelist,plane,self._building,sun_to_earth_project,cut,adjust)
@@ -1254,7 +1266,31 @@ class rtaa_solar_study:
         
     def cm(self):
         return { id : r._cm for id,r in self._results.items()} 
+
+# to run study on model build by hand in OCC
+class rtaa_solar_study_custom:
+    def __init__(self):
+        pass
         
+    def set_faces(self,faces):
+        self._solar_faces=faces
+        # compute normals ?
+        
+    def set_building(self,shape):
+        self._building=shape
+        
+    def set_dom(self,name):
+        pass
+        
+    def run(self):
+        source=rtaa_sun_data(self.dom)
+        sun_to_earth_project,irradiance= source.sun_data()
+        
+        rtaa=rtaa_on_faces(self._solar_faces,plane,self._building,sun_to_earth_project,cut,adjust)
+            
+        rtaa.compute_masks()
+        rtaa.compute_cm(irradiance)
+        #rtaa
     
 """        
 if __name__ == "__main__":
