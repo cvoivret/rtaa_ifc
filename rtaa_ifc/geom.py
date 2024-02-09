@@ -72,6 +72,8 @@ def fuse_listOfShape(los,FuzzyValue=1e-6):
     """
     Simple funtion to wrap boilerplate code
     """    
+    if(len(los)==1):
+        return los[0]
     fuser=BOPAlgo_BOP()
     fuser.SetOperation(BOPAlgo_Operation.BOPAlgo_FUSE)
     los_1=TopTools_ListOfShape()
