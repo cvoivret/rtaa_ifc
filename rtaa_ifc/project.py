@@ -186,7 +186,7 @@ class rtaa_sun_data:
         
         daytime = (90.-zen_vec)>=0.0
         irr_crit_day=irr[daytime]
-        print(irr_crit_day)
+        #print(irr_crit_day)
         
         return lvec_day,irr_crit_day
         
