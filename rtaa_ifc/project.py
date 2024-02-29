@@ -60,23 +60,6 @@ class rtaa_domcoord(Enum):
         return cls(list(rtaa_domcoord)[minpos])
             
 
-class rtaa_location_orientation:
-   
-    def __init__(self):
-        pass
-    
-    def set_dom(longitude,latitude):
-        self._dom = rtaa_domcoord.RUN.closer_dom(longitude,latitude)
-        
-         ## datetime to compute shadow
-        
-        
-    # depdending on the dom, load correct dataframes    
-    def get_irradiance(self):
-        pass
-        
-    # depending on dom, get critical masked values
-
 class rtaa_sun_data:
 
     def __init__(self,dom=rtaa_domcoord.RUN,tn_angle=0.0):
@@ -92,19 +75,7 @@ class rtaa_sun_data:
         dt_index=pd.date_range("1/1/2020","12/31/2020",freq='H',inclusive='right')
         self._irradiance=meteo.assign(time=dt_index.values)
         
-    def _orientation_sector(self,to_tn):
-        orientation=None
-        if(abs(to_tn)<=np.pi/4.):
-            orientation=rtaa_orientation_sector.NORD
-        elif ( to_tn>np.pi/4.) & (to_tn<=3.*np.pi/4.):
-            orientation=rtaa_orientation_sector.EST
-        elif ( to_tn<-np.pi/4.) & (to_tn>=-3.*np.pi/4.):
-            orientation=rtaa_orientation_sector.OUEST
-        elif ( abs(to_tn)>3.*np.pi/4.):
-            orientation=rtaa_orientation_sector.SUD
-        return orientation
-
-    
+   
     def _critical_mask(self,sector=rtaa_orientation_sector.NORD):
         mask=None
         t=self._irradiance.time.dt
@@ -126,21 +97,20 @@ class rtaa_sun_data:
                 
         return mask
                 
-    def _critical_irradiance(self,to_tn=0.0):
+    def _critical_irradiance(self,sector):
         
-        sector = self._orientation_sector(to_tn)
+        #sector = self._orientation_sector(to_tn)
         
         mask = self._critical_mask(sector)
         
         return self._irradiance[mask]
         
-    def sun_data(self,to_tn_angle=0.0):
-        
-        
+    def sun_data(self,sector):
+                
         lat=self._dom.value[0]
         lon=self._dom.value[1]
         
-        irr= self._critical_irradiance(to_tn_angle).copy()
+        irr= self._critical_irradiance(sector).copy()
         dtindex=pd.DatetimeIndex(irr.time)
         #print(dtindex)
         
@@ -198,7 +168,19 @@ class building_geoloc:
         self._dom = rtaa_domcoord.RUN
         
         self._set_tn_angle(0.0)
+    
+    def info(self):
         
+        print("Latitude   : ",self._latitude)
+        print("Longitude  : ",self._longitude)
+        print("Closest dom: ",self._dom.name)
+        #print("\n",flush=True)
+        print("True north vector :",self._tn_vec.Coord())
+        print("Angle true North : ",self._tn_angle)
+        print("\n")
+
+        
+    
     def set_from_ifc(self,ifc_file):
         
         repr_context = ifc_file.by_type('IfcGeometricRepresentationContext',False)
@@ -216,6 +198,8 @@ class building_geoloc:
         self._set_coord(latitude,longitude)
         
         
+        
+        
     def _set_coord(self,lat,lon):    
         
         self._latitude = lat
@@ -224,9 +208,7 @@ class building_geoloc:
         #print("altitude : ",ifcsite.RefElevation)
                 
         self._dom = rtaa_domcoord.RUN.closer_dom(self._longitude,self._latitude)
-        print("latitude : ",self._latitude)
-        print("longitude: ",self._longitude)
-        print("dom      : ",self._dom.name)
+        
     
     def _set_tn_angle(self,tn_angle):
         # update angle and vector from angle
@@ -241,8 +223,7 @@ class building_geoloc:
         
         self._tn_vec = gp_Vec(Yaxis.Direction()).Transformed(tn_rotation)
         
-        print("True north vector :",self._tn_vec.Coord())
-        print("Angle true North : ",self._tn_angle)
+        
         
     def _set_tn_vec(self,tn_X,tn_Y):
         # update angle and vector from vector coord
@@ -255,8 +236,7 @@ class building_geoloc:
         
         self._tn_angle =self._tn_vec.Angle(gp_Vec(Yaxis.Direction()))
         
-        print("True north vector :",self._tn_vec.Coord())
-        print("Angle true North : ",self._tn_angle)
+        
         
     def face_normal_to_tn(self,face):
         """Compute the angle between a normal face and 
@@ -285,4 +265,28 @@ class building_geoloc:
         to_tn = projected.AngleWithRef(self._tn_vec,Zvec)
         return to_tn
         
+    def orientation_sector(self,to_tn):
+        """Compute the 
+
+        Parameters
+        ----------
+        to_tn : float 
+            
+        Returns
+        -------
+        orientation : rtaa_orientation_sector
+            
+            
+        """        
+        orientation=None
+        if(abs(to_tn)<=np.pi/4.):
+            orientation=rtaa_orientation_sector.NORD
+        elif ( to_tn>np.pi/4.) & (to_tn<=3.*np.pi/4.):
+            orientation=rtaa_orientation_sector.EST
+        elif ( to_tn<-np.pi/4.) & (to_tn>=-3.*np.pi/4.):
+            orientation=rtaa_orientation_sector.OUEST
+        elif ( abs(to_tn)>3.*np.pi/4.):
+            orientation=rtaa_orientation_sector.SUD
+        return orientation
+            
         

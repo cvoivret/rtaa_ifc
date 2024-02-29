@@ -7,7 +7,7 @@ import ifcopenshell
 from ifcopenshell.geom import create_shape
 
 
-from .project import project_location
+from .project import building_geoloc
 from .ids_rtaadom import check_ventilation_ids
 
 from .geom import   (
@@ -215,7 +215,7 @@ class space_ventilation_data:
                             self._win_faces[win_id].extend(bigfaces)
                             
     
-    def opening_ratio(self,projloc):
+    def opening_ratio(self,geoloc):
         """Compute the opening ratio indicator defined in RTAA. 
 
         Parameters
@@ -256,8 +256,9 @@ class space_ventilation_data:
                 wall_area[wall_id].append(gpp.Mass())
                 # since walls are generealy straight, should 
                 # contain unique value
-                angles.append(round(projloc.face_orientation_angle_tn(f),6))
-                orient.append(projloc.face_orientation_sector(f))
+                to_tn=geoloc.face_normal_to_tn(f)
+                angles.append(round(to_tn,6))
+                orient.append(geoloc.orientation_sector(to_tn))
             # reducing to normally unique value
             wall_angle[wall_id]=list(set(angles))[0]
             wall_orient[wall_id]=list(set(orient))[0]
@@ -505,21 +506,27 @@ class rtaa_ventilation_study:
         
         
         basename= os.path.splitext(os.path.basename(ifcfilename))[0]        
-        print('fileidr ',filedir)
-        print('base ', basename)
+        
+        print('Working directory : ',filedir)
+        print('Base name         : ', basename)
         self._output_file= os.path.join( filedir,
                                          basename+'__ventilation.xlsx')
-        print(' out ', self._output_file)
-        
+        print('Output filename   : ', self._output_file)
+        print('\n')
         
         self._ifc_file= ifcopenshell.open(ifcfilename)
         
         self._space_elements=dict()
         self._opening_elements=dict()
-                        
-        self._proj_loc=project_location()
-        self._proj_loc.set_location_from_ifc(self._ifc_file)
-        self._proj_loc.set_northing_from_ifc(self._ifc_file)
+        
+        self._geoloc = building_geoloc()
+        self._geoloc.set_from_ifc(self._ifc_file)
+        
+        self._geoloc.info()
+        
+        #self._proj_loc=project_location()
+        #self._proj_loc.set_location_from_ifc(self._ifc_file)
+        #self._proj_loc.set_northing_from_ifc(self._ifc_file)
 
     def _add_elements(self,ids=[],ltypes=[],container=None):
         if((len(ids)==0) & (len(ltypes)==0)):
@@ -775,7 +782,7 @@ class rtaa_ventilation_study:
             svd.info()
             svd.sweeping(self._window_shapes)
             #svd.analyze_faces()
-            svd.opening_ratio(self._proj_loc)
+            svd.opening_ratio(self._geoloc)
             
             self._results.append(svd)
             

@@ -1,14 +1,5 @@
-import sys
-
-
 import numpy as np  
-from collections import defaultdict
-import pandas as pd
-import multiprocessing
 
-
-from OCC.Core.TopoDS import TopoDS_Face
-from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
 from OCC.Core.BRepBuilderAPI import (
                                     BRepBuilderAPI_Copy,
                                     BRepBuilderAPI_Transform,
@@ -16,24 +7,16 @@ from OCC.Core.BRepBuilderAPI import (
                                     BRepBuilderAPI_MakePolygon
                                     )
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
-from OCC.Core.BRepGProp import brepgprop #_SurfaceProperties,brepgprop_VolumeProperties
+from OCC.Core.BRepGProp import brepgprop 
 from OCC.Core.GProp import GProp_GProps
-from OCC.Core.BRep import BRep_Tool
-from OCC.Core.Geom import Geom_Plane
-from OCC.Core.BRepAlgoAPI import BRepAlgoAPI_Common
 
 from OCC.Core.gp import (
                         gp_Pnt,
                         gp_Dir,
                         gp_Vec,
-                        gp_Pln,
-                        gp_Lin,
-                        gp_Trsf,
-                        gp_Ax3,
-                        gp_Ax1
+                        gp_Trsf
                         )
-from OCC.Display.SimpleGui import init_display
-from OCC.Core.Quantity import Quantity_Color,Quantity_TOC_RGB
+
 
 def ref_face(lp=1.0,hp=1.0):
     # lp : largeur  
